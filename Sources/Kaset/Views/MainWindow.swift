@@ -109,7 +109,7 @@ struct MainWindow: View {
             // Uses a SINGLETON WebView instance that persists for the app lifetime.
             // Keep it as a hidden 1×1 anchor for audio playback; do not reveal a mini overlay.
             if self.authService.state.isLoggedIn {
-                PersistentPlayerView(videoId: playerService.pendingPlayVideoId, isExpanded: false)
+                PersistentPlayerView(videoId: self.playerService.pendingPlayVideoId, isExpanded: false)
                     .frame(width: 1, height: 1)
                     .opacity(0)
                     .allowsHitTesting(false)

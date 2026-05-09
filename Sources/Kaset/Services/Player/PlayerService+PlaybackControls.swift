@@ -224,7 +224,7 @@ extension PlayerService {
     /// Resumes playback.
     func resume() async {
         self.logger.debug("Resuming playback")
-        
+
         SingletonPlayerWebView.shared.setAutoplayBlocked(false)
 
         if self.isPendingRestoredLoadDeferred {

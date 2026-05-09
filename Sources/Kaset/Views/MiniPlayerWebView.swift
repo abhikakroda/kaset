@@ -275,7 +275,7 @@ final class SingletonPlayerWebView {
 
         // Dynamic startup state is refreshed before each full page load so the
         // next document gets current volume/autoplay flags at document start.
-        
+
         let shouldBlockAutoplay = playerService.isRestoringPlaybackSession || playerService.pendingPlayVideoId == nil
 
         self.installUserScripts(

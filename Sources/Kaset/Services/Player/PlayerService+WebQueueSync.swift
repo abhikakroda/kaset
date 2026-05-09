@@ -564,7 +564,8 @@ extension PlayerService {
         // update our internal state without triggering another loadVideo navigation.
         if let expectedIndex = self.expectedQueueIndexAfterCurrentTrack(),
            let expectedSong = self.queue[safe: expectedIndex],
-           self.injectedWebQueueVideoId == expectedSong.videoId {
+           self.injectedWebQueueVideoId == expectedSong.videoId
+        {
             self.logger.info("Track ended natively. Injected track \(expectedSong.videoId) will auto-play; advancing queue index only.")
             self.injectedWebQueueVideoId = nil
             self.pushForwardSkipStackIfLeavingIndex(for: expectedIndex)
