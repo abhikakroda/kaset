@@ -275,37 +275,6 @@ extension PlayerService {
         self.logger.debug("Skipping to next track")
         self.clearRestoredPlaybackSessionState()
 
-        if !self.queue.isEmpty {
-            if self.currentIndex < self.queue.count - 1 {
-                self.pushForwardSkipStackIfLeavingIndex(for: self.currentIndex + 1)
-                self.currentIndex += 1
-                if let nextSong = self.queue[safe: self.currentIndex] {
-                    await self.play(song: nextSong)
-                }
-                await self.fetchMoreMixSongsIfNeeded()
-                self.saveQueueForPersistence()
-            } else if self.repeatMode == .all {
-                self.pushForwardSkipStackIfLeavingIndex(for: 0)
-                self.currentIndex = 0
-                if let firstSong = self.queue.first {
-                    await self.play(song: firstSong)
-                }
-                self.saveQueueForPersistence()
-            } else if self.mixContinuationToken != nil {
-                let previousCount = self.queue.count
-                await self.fetchMoreMixSongsIfNeeded()
-                if self.queue.count > previousCount {
-                    self.pushForwardSkipStackIfLeavingIndex(for: self.currentIndex + 1)
-                    self.currentIndex += 1
-                    if let nextSong = self.queue[safe: self.currentIndex] {
-                        await self.play(song: nextSong)
-                    }
-                    self.saveQueueForPersistence()
-                }
-            }
-            return
-        }
-
         // Standalone artist episodes are intentionally not in the local queue.
         // Do not let them fall through to YouTube Music's ambient next button.
         guard self.currentEpisode == nil else {
@@ -323,33 +292,6 @@ extension PlayerService {
         self.logger.debug("Going to previous track")
         self.clearRestoredPlaybackSessionState()
 
-        if !self.queue.isEmpty {
-            if self.progress > 3 {
-                await self.seek(to: 0)
-                return
-            }
-
-            if let priorIndex = self.popForwardSkipIndex(), self.queue.indices.contains(priorIndex) {
-                self.currentIndex = priorIndex
-                if let prevSong = self.queue[safe: priorIndex] {
-                    await self.play(song: prevSong)
-                }
-                self.saveQueueForPersistence()
-                return
-            }
-
-            if self.currentIndex > 0 {
-                self.currentIndex -= 1
-                if let prevSong = self.queue[safe: self.currentIndex] {
-                    await self.play(song: prevSong)
-                }
-                self.saveQueueForPersistence()
-            } else {
-                await self.seek(to: 0)
-            }
-            return
-        }
-
         // Standalone artist episodes are intentionally not in the local queue.
         // Do not restart them or fall through to YouTube Music's ambient previous button.
         guard self.currentEpisode == nil else {
@@ -359,7 +301,7 @@ extension PlayerService {
 
         if self.progress > 3 {
             await self.seek(to: 0)
-        } else {
+        } else if self.pendingPlayVideoId != nil {
             SingletonPlayerWebView.shared.previous()
         }
     }
