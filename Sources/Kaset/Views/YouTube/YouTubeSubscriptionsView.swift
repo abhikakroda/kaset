@@ -49,6 +49,7 @@ struct YouTubeSubscriptionsView: View {
                     } description: {
                         Text("Videos from channels you subscribe to appear here.", comment: "Empty subscriptions feed description")
                     }
+                    .padding(.horizontal, DetailContentLayout.horizontalInset)
                 } else {
                     LazyVGrid(columns: Self.columns, spacing: 20) {
                         ForEach(self.viewModel.videos) { video in
@@ -66,49 +67,64 @@ struct YouTubeSubscriptionsView: View {
                                 }
                         }
                     }
+                    // Vertical grid: inset its resting content; the channel rail
+                    // above keeps its own edge-to-edge track so it slides under
+                    // the floating glass sidebar on macOS 26.
+                    .padding(.horizontal, DetailContentLayout.horizontalInset)
                 }
             }
-            .padding(20)
+            .padding(.vertical, 20)
         }
     }
 
     private var channelRail: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 16) {
-                ForEach(self.viewModel.channels) { channel in
-                    NavigationLink(value: YouTubeRoute.channel(channelId: channel.channelId)) {
-                        VStack(spacing: 6) {
-                            CachedAsyncImage(
-                                url: channel.thumbnailURL,
-                                targetSize: CGSize(width: 112, height: 112)
-                            ) { image in
-                                image
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fill)
-                            } placeholder: {
-                                Circle()
-                                    .fill(.quaternary)
-                                    .overlay {
-                                        Image(systemName: "person.fill")
-                                            .foregroundStyle(.tertiary)
-                                    }
-                            }
-                            .frame(width: 56, height: 56)
-                            .clipShape(.circle)
+            // Outer spacing:0 so the leading/trailing Spacers produce an exact
+            // resting inset (no extra HStack spacing inflation); the rail track
+            // stays edge-to-edge and slides under the floating glass sidebar.
+            HStack(spacing: 0) {
+                Spacer()
+                    .frame(width: DetailContentLayout.horizontalInset)
 
-                            Text(channel.name)
-                                .font(.system(size: 11))
-                                .foregroundStyle(.primary)
-                                .lineLimit(1)
-                                .frame(width: 72)
+                HStack(spacing: 16) {
+                    ForEach(self.viewModel.channels) { channel in
+                        NavigationLink(value: YouTubeRoute.channel(channelId: channel.channelId)) {
+                            VStack(spacing: 6) {
+                                CachedAsyncImage(
+                                    url: channel.thumbnailURL,
+                                    targetSize: CGSize(width: 112, height: 112)
+                                ) { image in
+                                    image
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                } placeholder: {
+                                    Circle()
+                                        .fill(.quaternary)
+                                        .overlay {
+                                            Image(systemName: "person.fill")
+                                                .foregroundStyle(.tertiary)
+                                        }
+                                }
+                                .frame(width: 56, height: 56)
+                                .clipShape(.circle)
+
+                                Text(channel.name)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(1)
+                                    .frame(width: 72)
+                            }
+                            .contentShape(Rectangle())
                         }
-                        .contentShape(Rectangle())
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(channel.name)
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(channel.name)
                 }
+
+                Spacer()
+                    .frame(width: DetailContentLayout.horizontalInset)
             }
-            .padding(.horizontal, 2)
+            .padding(.vertical, 2)
         }
         .accessibilityIdentifier(AccessibilityID.YouTubeContent.subscriptionsRail)
     }
