@@ -211,6 +211,7 @@ struct VideoSupportTests {
         let source = MockMusicVideoQualitySource()
         source.levels = ["hd1080", "hd720", "auto"]
         source.current = "hd720"
+        source.loadedId = "abc"
         self.playerService.videoQualitySource = source
         self.playerService.currentTrack = self.makeVideoSong("abc")
         self.playerService.showVideo = true
@@ -229,6 +230,7 @@ struct VideoSupportTests {
     func discoveryFollowsTrackChange() async {
         let source = MockMusicVideoQualitySource()
         source.levels = ["hd720", "auto"]
+        source.loadedId = "first"
         self.playerService.videoQualitySource = source
         self.playerService.showVideo = true
         self.playerService.currentTrack = self.makeVideoSong("first")
@@ -236,10 +238,12 @@ struct VideoSupportTests {
         await self.playerService.refreshVideoQualityOptionsIfNeeded()
         #expect(self.playerService.videoQualityOptionsVideoId == "first")
 
-        // Simulate the next song: resetTrackStatus clears state, track changes.
+        // Simulate the next song: resetTrackStatus clears state, track changes,
+        // and the player navigates to the new video.
         self.playerService.resetTrackStatus()
         #expect(self.playerService.videoQualityLevels.isEmpty)
         source.levels = ["hd1080", "hd720", "auto"]
+        source.loadedId = "second"
         self.playerService.currentTrack = self.makeVideoSong("second")
 
         await self.playerService.refreshVideoQualityOptionsIfNeeded()
@@ -252,6 +256,7 @@ struct VideoSupportTests {
     func discoveryRetriesInternallyUntilReady() async {
         let source = MockMusicVideoQualitySource()
         source.levels = ["hd720", "auto"]
+        source.loadedId = "abc"
         source.emptyUntilCall = 2 // empty on attempt 1, ready on attempt 2
         self.playerService.videoQualitySource = source
         self.playerService.showVideo = true
@@ -270,6 +275,7 @@ struct VideoSupportTests {
     func discoveryDoesNotLatchWhenNeverReady() async {
         let source = MockMusicVideoQualitySource()
         source.levels = [] // player never reports levels
+        source.loadedId = "abc"
         self.playerService.videoQualitySource = source
         self.playerService.showVideo = true
         self.playerService.currentTrack = self.makeVideoSong("abc")
@@ -282,10 +288,53 @@ struct VideoSupportTests {
         #expect(source.availableCallCount == 3) // exhausted the retry budget
     }
 
+    @Test("Discovery does not latch the previous page's levels after a skip")
+    func discoveryWaitsForLoadedVideo() async {
+        // The player still has the previous video loaded (loadedId != requested),
+        // but reports non-empty levels for it. Discovery must NOT store those
+        // under the new videoId.
+        let source = MockMusicVideoQualitySource()
+        source.levels = ["hd1080", "hd720", "auto"] // previous page's levels
+        source.loadedId = "previous" // page hasn't navigated to "new" yet
+        self.playerService.videoQualitySource = source
+        self.playerService.showVideo = true
+        self.playerService.currentTrack = self.makeVideoSong("new")
+
+        await self.playerService.refreshVideoQualityOptionsIfNeeded()
+
+        // Loaded id never matched the requested video, so nothing latched and
+        // the stale levels were never read.
+        #expect(self.playerService.videoQualityLevels.isEmpty)
+        #expect(self.playerService.videoQualityOptionsVideoId == nil)
+        #expect(source.availableCallCount == 0)
+    }
+
+    @Test("Discovery latches once the loaded video catches up to the request")
+    func discoveryLatchesWhenLoadedCatchesUp() async {
+        let source = MockMusicVideoQualitySource()
+        source.levels = ["hd720", "auto"]
+        source.loadedId = "stale" // first probe: page still on the old video
+        self.playerService.videoQualitySource = source
+        self.playerService.showVideo = true
+        self.playerService.currentTrack = self.makeVideoSong("target")
+
+        // Flip the loaded id to the requested one after a beat, mid-retry.
+        Task {
+            try? await Task.sleep(for: .milliseconds(400))
+            source.loadedId = "target"
+        }
+
+        await self.playerService.refreshVideoQualityOptionsIfNeeded()
+
+        #expect(self.playerService.videoQualityLevels == ["hd720", "auto"])
+        #expect(self.playerService.videoQualityOptionsVideoId == "target")
+    }
+
     @Test("Discovery is a no-op when video mode is closed")
     func discoverySkippedWhenVideoClosed() async {
         let source = MockMusicVideoQualitySource()
         source.levels = ["hd720"]
+        source.loadedId = "abc"
         self.playerService.videoQualitySource = source
         self.playerService.currentTrack = self.makeVideoSong("abc")
         self.playerService.showVideo = false
@@ -304,12 +353,23 @@ private final class MockMusicVideoQualitySource: MusicVideoQualitySource {
     var levels: [String] = []
     var current: String?
     private(set) var availableCallCount = 0
+    private(set) var loadedCallCount = 0
     private(set) var setLevels: [String] = []
+
+    /// The videoId the "player" currently reports as loaded. Defaults to nil
+    /// (no video loaded); tests set it to the requested id to simulate a ready
+    /// page, or to a different id to simulate the page lagging behind a skip.
+    var loadedId: String?
 
     /// When set, `availableQualityLevels()` returns `[]` until this many calls
     /// have been made, then returns `levels` — simulating a player that becomes
     /// ready after a couple of probes.
     var emptyUntilCall = 0
+
+    func loadedVideoId() async -> String? {
+        self.loadedCallCount += 1
+        return self.loadedId
+    }
 
     func availableQualityLevels() async -> [String] {
         self.availableCallCount += 1
