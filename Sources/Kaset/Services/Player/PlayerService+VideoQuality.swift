@@ -32,33 +32,42 @@ extension SingletonPlayerWebView: MusicVideoQualitySource {}
 extension PlayerService {
     /// Loads the resolution levels for the current video if they haven't been
     /// loaded yet. Idempotent: the per-video guard is set only **after** a
-    /// successful (non-empty) fetch, so empty probes on a not-yet-ready player
-    /// are retried on the next call. Call this whenever the active video may
-    /// have changed while `showVideo` is true.
+    /// successful (non-empty) fetch. When the player isn't ready yet (empty
+    /// levels) it retries a few times internally — mirroring
+    /// `YouTubePlayerService.refreshPlaybackOptions` — so the picker still
+    /// populates even if the only caller (a `MainWindow` onChange) fires before
+    /// the player has enumerated formats. Re-checks `showVideo`/`videoId`
+    /// between attempts so it can't loop forever or leak across track changes.
     func refreshVideoQualityOptionsIfNeeded() async {
         guard self.showVideo, let videoId = self.currentTrack?.videoId else { return }
         guard self.videoQualityOptionsVideoId != videoId else { return }
 
-        let levels = await self.videoQualitySource.availableQualityLevels()
+        for attempt in 0 ..< 3 {
+            let levels = await self.videoQualitySource.availableQualityLevels()
 
-        // Bail if the track changed out from under us mid-fetch — a later call
-        // will handle the new video.
-        guard self.currentTrack?.videoId == videoId else { return }
+            // Bail if video mode closed or the track changed mid-fetch — a
+            // later call handles the new state; don't latch the guard.
+            guard self.showVideo, self.currentTrack?.videoId == videoId else { return }
 
-        guard !levels.isEmpty else {
-            // Player not ready yet; leave the guard unset so we retry.
-            return
+            if !levels.isEmpty {
+                let current = await self.videoQualitySource.currentQualityLevel()
+
+                // Re-check after the second await as well, so a track change
+                // mid-fetch can't leak the previous video's state onto the new one.
+                guard self.showVideo, self.currentTrack?.videoId == videoId else { return }
+
+                self.videoQualityLevels = levels
+                self.currentVideoQuality = current
+                self.videoQualityOptionsVideoId = videoId
+                return
+            }
+
+            // Player not ready yet; wait and retry (guard stays unset).
+            if attempt < 2 {
+                try? await Task.sleep(for: .milliseconds(1500))
+                guard self.showVideo, self.currentTrack?.videoId == videoId else { return }
+            }
         }
-
-        let current = await self.videoQualitySource.currentQualityLevel()
-
-        // Re-check after the second await as well, so a track change mid-fetch
-        // can't leak the previous video's levels/quality onto the new track.
-        guard self.currentTrack?.videoId == videoId else { return }
-
-        self.videoQualityLevels = levels
-        self.currentVideoQuality = current
-        self.videoQualityOptionsVideoId = videoId
     }
 
     /// Selects a playback resolution and remembers it optimistically.

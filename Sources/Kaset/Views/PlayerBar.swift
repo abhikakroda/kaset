@@ -767,7 +767,7 @@ struct PlayerBar: View {
             // Resolution picker — only while video mode is active and the
             // player has reported selectable levels.
             if self.playerService.showVideo, !self.playerService.videoQualityLevels.isEmpty {
-                self.videoQualityMenu(self.playerService)
+                VideoQualityMenu(player: self.playerService)
             }
         }
     }
@@ -867,6 +867,12 @@ private struct CompactVisibleActionButtons: View {
             .accessibilityLabel(String(localized: "Video"))
             .accessibilityValue(self.playerService.showVideo ? String(localized: "Playing") : String(localized: "Off"))
             .disabled(self.playerService.currentTrack == nil || !self.playerService.currentTrackHasVideo)
+
+            // Resolution picker — also exposed in compact layout so narrow
+            // windows can change video quality (mirrors the standard bar).
+            if self.playerService.showVideo, !self.playerService.videoQualityLevels.isEmpty {
+                VideoQualityMenu(player: self.playerService)
+            }
         }
     }
 }

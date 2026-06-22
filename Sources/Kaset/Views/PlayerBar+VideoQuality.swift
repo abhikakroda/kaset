@@ -1,23 +1,24 @@
 import SwiftUI
 
-// MARK: - PlayerBar Video Quality Menu
+// MARK: - VideoQualityMenu
 
-extension PlayerBar {
-    /// Resolution menu for music video mode. Mirrors the YouTube side's quality
-    /// menu and reuses ``YouTubeQuality/displayName(for:)`` since the music
-    /// `#movie_player` reports the same level identifiers. Shown only while
-    /// video mode is active and the player has reported selectable levels.
-    ///
-    /// Takes the service explicitly so this lives in its own file (keeping
-    /// `PlayerBar.swift` under the file-length limit) without widening the
-    /// access level of `PlayerBar`'s private environment.
-    func videoQualityMenu(_ player: PlayerService) -> some View {
+/// Resolution menu for music video mode. Mirrors the YouTube side's quality
+/// menu and reuses ``YouTubeQuality/displayName(for:)`` since the music
+/// `#movie_player` reports the same level identifiers.
+///
+/// A standalone view so both the standard player bar (`PlayerBar.actionButtons`)
+/// and the compact layout (`CompactVisibleActionButtons`) can render the same
+/// picker. Callers gate visibility on `showVideo && !videoQualityLevels.isEmpty`.
+struct VideoQualityMenu: View {
+    let player: PlayerService
+
+    var body: some View {
         Menu {
-            ForEach(player.videoQualityLevels, id: \.self) { level in
+            ForEach(self.player.videoQualityLevels, id: \.self) { level in
                 Button {
-                    player.selectVideoQuality(level)
+                    self.player.selectVideoQuality(level)
                 } label: {
-                    if player.currentVideoQuality == level {
+                    if self.player.currentVideoQuality == level {
                         Label(YouTubeQuality.displayName(for: level), systemImage: "checkmark")
                     } else {
                         Text(YouTubeQuality.displayName(for: level))

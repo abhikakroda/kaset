@@ -248,24 +248,38 @@ struct VideoSupportTests {
         #expect(source.availableCallCount == 2)
     }
 
-    @Test("Empty levels (player not ready) do not latch and can retry")
-    func discoveryRetriesAfterEmpty() async {
+    @Test("A single discovery call retries internally until the player is ready")
+    func discoveryRetriesInternallyUntilReady() async {
         let source = MockMusicVideoQualitySource()
-        source.levels = [] // player not ready yet
+        source.levels = ["hd720", "auto"]
+        source.emptyUntilCall = 2 // empty on attempt 1, ready on attempt 2
+        self.playerService.videoQualitySource = source
+        self.playerService.showVideo = true
+        self.playerService.currentTrack = self.makeVideoSong("abc")
+
+        // One call self-heals: it retries internally rather than relying on a
+        // future onChange event for the same video.
+        await self.playerService.refreshVideoQualityOptionsIfNeeded()
+
+        #expect(self.playerService.videoQualityLevels == ["hd720", "auto"])
+        #expect(self.playerService.videoQualityOptionsVideoId == "abc")
+        #expect(source.availableCallCount == 2)
+    }
+
+    @Test("Discovery does not latch when the player never becomes ready")
+    func discoveryDoesNotLatchWhenNeverReady() async {
+        let source = MockMusicVideoQualitySource()
+        source.levels = [] // player never reports levels
         self.playerService.videoQualitySource = source
         self.playerService.showVideo = true
         self.playerService.currentTrack = self.makeVideoSong("abc")
 
         await self.playerService.refreshVideoQualityOptionsIfNeeded()
-        #expect(self.playerService.videoQualityLevels.isEmpty)
-        // Guard NOT latched, so a later call retries the same video.
-        #expect(self.playerService.videoQualityOptionsVideoId == nil)
 
-        source.levels = ["hd720", "auto"] // player now ready
-        await self.playerService.refreshVideoQualityOptionsIfNeeded()
-        #expect(self.playerService.videoQualityLevels == ["hd720", "auto"])
-        #expect(self.playerService.videoQualityOptionsVideoId == "abc")
-        #expect(source.availableCallCount == 2)
+        #expect(self.playerService.videoQualityLevels.isEmpty)
+        // Guard NOT latched, so a later event can retry the same video.
+        #expect(self.playerService.videoQualityOptionsVideoId == nil)
+        #expect(source.availableCallCount == 3) // exhausted the retry budget
     }
 
     @Test("Discovery is a no-op when video mode is closed")
@@ -292,8 +306,16 @@ private final class MockMusicVideoQualitySource: MusicVideoQualitySource {
     private(set) var availableCallCount = 0
     private(set) var setLevels: [String] = []
 
+    /// When set, `availableQualityLevels()` returns `[]` until this many calls
+    /// have been made, then returns `levels` — simulating a player that becomes
+    /// ready after a couple of probes.
+    var emptyUntilCall = 0
+
     func availableQualityLevels() async -> [String] {
         self.availableCallCount += 1
+        if self.availableCallCount < self.emptyUntilCall {
+            return []
+        }
         return self.levels
     }
 
