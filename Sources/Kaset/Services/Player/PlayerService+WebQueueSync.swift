@@ -21,10 +21,17 @@ extension PlayerService {
         self.pendingPlayVideoId = observedVideoId
         self.isKasetInitiatedPlayback = false
         self.isAwaitingWebRestoredTrack = false
+        if previousVideoId != observedVideoId {
+            // The saved seek belongs to the persisted track, not a different server-restored track.
+            self.pendingRestoredSeek = nil
+        }
 
         // Sync the web view's current video ID so Kaset knows the player is already on this track
         SingletonPlayerWebView.shared.currentVideoId = observedVideoId
         if observedVideoId == previousVideoId, !self.queue.isEmpty {
+            Task {
+                await self.fetchSongMetadata(videoId: observedVideoId)
+            }
             return
         }
         self.mixContinuationToken = nil
@@ -138,13 +145,52 @@ extension PlayerService {
         guard self.state == .playing || self.state == .paused else { return }
 
         guard let nextIndex = self.expectedQueueIndexAfterCurrentTrack(),
-              let nextSong = self.queue[safe: nextIndex] else { return }
-
-        if self.injectedWebQueueVideoId != nextSong.videoId {
-            self.injectedWebQueueVideoId = nextSong.videoId
-            SingletonPlayerWebView.shared.injectNextSong(videoId: nextSong.videoId)
-            self.logger.info("Synced web queue: injected \(nextSong.videoId) to play next natively")
+              let nextSong = self.queue[safe: nextIndex]
+        else {
+            self.clearWebQueueInjectionState()
+            return
         }
+
+        guard self.injectedWebQueueVideoId != nextSong.videoId,
+              self.pendingWebQueueInjectionVideoId != nextSong.videoId
+        else { return }
+
+        self.pendingWebQueueInjectionVideoId = nextSong.videoId
+        if SingletonPlayerWebView.shared.injectNextSong(videoId: nextSong.videoId) {
+            self.logger.info("Syncing web queue: requested injection of \(nextSong.videoId) to play next natively")
+        } else {
+            self.pendingWebQueueInjectionVideoId = nil
+        }
+    }
+
+    /// Records the WebView result for an attempted native queue injection.
+    func handleWebQueueInjectionResult(videoId: String, success: Bool, reason: String?) {
+        guard self.pendingWebQueueInjectionVideoId == videoId else {
+            self.logger.debug("Ignoring web queue injection result for non-pending video \(videoId)")
+            return
+        }
+        self.pendingWebQueueInjectionVideoId = nil
+
+        guard success else {
+            if self.injectedWebQueueVideoId == videoId {
+                self.injectedWebQueueVideoId = nil
+            }
+            self.logger.warning("Web queue injection failed for \(videoId): \(reason ?? "unknown")")
+            return
+        }
+
+        guard let nextIndex = self.expectedQueueIndexAfterCurrentTrack(),
+              self.queue[safe: nextIndex]?.videoId == videoId
+        else {
+            if self.injectedWebQueueVideoId == videoId {
+                self.injectedWebQueueVideoId = nil
+            }
+            self.logger.debug("Ignoring stale web queue injection confirmation for \(videoId)")
+            return
+        }
+
+        self.injectedWebQueueVideoId = videoId
+        self.logger.info("Synced web queue: confirmed \(videoId) to play next natively")
     }
 
     private var canAdvanceNativeQueueAfterTrackEnd: Bool {
@@ -569,16 +615,10 @@ extension PlayerService {
             self.logger.info("Track ended natively. Injected track \(expectedSong.videoId) will auto-play; advancing queue index only.")
             self.injectedWebQueueVideoId = nil
             self.pushForwardSkipStackIfLeavingIndex(for: expectedIndex)
-            self.currentIndex = expectedIndex
-            self.currentTrack = expectedSong
-            self.isKasetInitiatedPlayback = true
-            self.resetTrackStatus()
-            if let cachedStatus = SongLikeStatusManager.shared.status(for: expectedSong.videoId) {
-                self.currentTrackLikeStatus = cachedStatus
-            }
-            self.saveQueueForPersistence()
-            // Pre-inject the *next* next track for the following transition
-            self.syncWebQueue()
+            self.advanceQueueStateForNativeNavigation(to: expectedIndex)
+            await self.fetchMoreMixSongsIfNeeded()
+            await self.fillSmartShuffleWindow()
+            self.saveQueueForPersistence(syncWebQueue: false)
             return
         }
 
@@ -590,9 +630,22 @@ extension PlayerService {
     func updateTrackMetadata(title: String, artist: String, thumbnailUrl: String, videoId observedVideoId: String?) {
         self.logger.debug("Track metadata updated: \(title) - \(artist)")
 
-        let isRestoringFromCloud = self.queue.isEmpty && !self.isKasetInitiatedPlayback && observedVideoId != nil
+        let isRestoringFromCloud = self.isAwaitingWebRestoredTrack
+            && !self.isKasetInitiatedPlayback
+            && observedVideoId != nil
 
-        if self.isPendingRestoredLoadDeferred || isRestoringFromCloud {
+        if self.isPendingRestoredLoadDeferred {
+            guard self.isAwaitingWebRestoredTrack else { return }
+            self.applyDeferredRestoredMetadata(
+                title: title,
+                artist: artist,
+                thumbnailUrl: thumbnailUrl,
+                videoId: observedVideoId
+            )
+            return
+        }
+
+        if isRestoringFromCloud {
             self.applyDeferredRestoredMetadata(
                 title: title,
                 artist: artist,
@@ -676,6 +729,7 @@ extension PlayerService {
         )
 
         if trackChanged {
+            self.clearWebQueueInjectionState()
             self.resetTrackStatus()
             // Immediately restore like status from SongLikeStatusManager cache
             if let cachedStatus = SongLikeStatusManager.shared.status(for: resolvedVideoId) {

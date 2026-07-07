@@ -353,6 +353,126 @@ extension PlayerServiceWebQueueSyncTests {
         #expect(self.playerService.pendingRestoredSeek == 180)
     }
 
+    @Test("Deferred restored playback ignores stray playing updates after fallback")
+    func deferredRestoredPlaybackIgnoresStrayPlayingUpdatesAfterFallback() {
+        let songs = [
+            Song(id: "1", title: "Song 1", artists: [], album: nil, duration: 180, thumbnailURL: nil, videoId: "v1"),
+            Song(id: "2", title: "Song 2", artists: [], album: nil, duration: 200, thumbnailURL: nil, videoId: "v2"),
+        ]
+        self.playerService.applyRestoredPlaybackSession(
+            queue: songs,
+            currentIndex: 0,
+            progress: 60,
+            duration: 180
+        )
+        self.playerService.isAwaitingWebRestoredTrack = false
+
+        self.playerService.updatePlaybackState(isPlaying: true, progress: 61, duration: 180)
+
+        #expect(self.playerService.isPendingRestoredLoadDeferred == true)
+        #expect(self.playerService.state == .paused)
+        #expect(self.playerService.pendingRestoredSeek == 60)
+        #expect(self.playerService.currentTrack?.videoId == "v1")
+        #expect(self.playerService.hasIssuedAutoplayPauseDuringDeferredRestore == true)
+    }
+
+    @Test("Late web metadata after restored fallback does not replace persisted queue")
+    func lateWebMetadataAfterRestoredFallbackDoesNotReplaceQueue() {
+        let songs = [
+            Song(id: "1", title: "Song 1", artists: [], album: nil, duration: 180, thumbnailURL: nil, videoId: "v1"),
+            Song(id: "2", title: "Song 2", artists: [], album: nil, duration: 200, thumbnailURL: nil, videoId: "v2"),
+        ]
+
+        self.playerService.applyRestoredPlaybackSession(
+            queue: songs,
+            currentIndex: 0,
+            progress: 60,
+            duration: 180
+        )
+        self.playerService.isAwaitingWebRestoredTrack = false
+
+        self.playerService.updateTrackMetadata(
+            title: "Late Web Track",
+            artist: "Web Artist",
+            thumbnailUrl: "",
+            videoId: "web-v1"
+        )
+
+        #expect(self.playerService.queue.map(\.videoId) == ["v1", "v2"])
+        #expect(self.playerService.currentIndex == 0)
+        #expect(self.playerService.currentTrack?.videoId == "v1")
+        #expect(self.playerService.pendingPlayVideoId == "v1")
+    }
+
+    @Test("Older restored fallback task cannot replace newer restored session")
+    func olderRestoredFallbackTaskCannotReplaceNewerRestoredSession() {
+        let first = [Song(id: "1", title: "First", artists: [], album: nil, duration: 180, thumbnailURL: nil, videoId: "first")]
+        let second = [Song(id: "2", title: "Second", artists: [], album: nil, duration: 200, thumbnailURL: nil, videoId: "second")]
+
+        self.playerService.applyRestoredPlaybackSession(queue: first, currentIndex: 0, progress: 10, duration: 180)
+        let firstGeneration = self.playerService.restoredPlaybackSessionGeneration
+        self.playerService.applyRestoredPlaybackSession(queue: second, currentIndex: 0, progress: 20, duration: 200)
+
+        #expect(self.playerService.restoredPlaybackSessionGeneration != firstGeneration)
+        #expect(self.playerService.currentTrack?.videoId == "second")
+        #expect(self.playerService.pendingPlayVideoId == "second")
+        #expect(self.playerService.pendingRestoredSeek == 20)
+    }
+
+    @Test("Different server-restored track clears persisted seek")
+    func differentServerRestoredTrackClearsPersistedSeek() {
+        let songs = [
+            Song(id: "1", title: "Song 1", artists: [], album: nil, duration: 180, thumbnailURL: nil, videoId: "v1"),
+        ]
+        self.playerService.applyRestoredPlaybackSession(
+            queue: songs,
+            currentIndex: 0,
+            progress: 60,
+            duration: 180
+        )
+
+        self.playerService.updateTrackMetadata(
+            title: "Server Song",
+            artist: "Server Artist",
+            thumbnailUrl: "",
+            videoId: "server-v2"
+        )
+
+        #expect(self.playerService.currentTrack?.videoId == "server-v2")
+        #expect(self.playerService.pendingPlayVideoId == "server-v2")
+        #expect(self.playerService.pendingRestoredSeek == nil)
+        #expect(self.playerService.isPendingRestoredLoadDeferred == true)
+    }
+
+    @Test("Same-track restored metadata still refreshes song metadata")
+    func sameTrackRestoredMetadataRefreshesSongMetadata() async {
+        let mockClient = MockYTMusicClient()
+        self.playerService.setYTMusicClient(mockClient)
+        let songs = [
+            Song(id: "1", title: "Song 1", artists: [], album: nil, duration: 180, thumbnailURL: nil, videoId: "v1"),
+            Song(id: "2", title: "Song 2", artists: [], album: nil, duration: 200, thumbnailURL: nil, videoId: "v2"),
+        ]
+
+        self.playerService.applyRestoredPlaybackSession(
+            queue: songs,
+            currentIndex: 0,
+            progress: 60,
+            duration: 180
+        )
+
+        self.playerService.updateTrackMetadata(
+            title: "Song 1",
+            artist: "",
+            thumbnailUrl: "",
+            videoId: "v1"
+        )
+        try? await Task.sleep(for: .milliseconds(50))
+
+        #expect(mockClient.getSongVideoIds.contains("v1"))
+        #expect(self.playerService.queue.map(\.videoId) == ["v1", "v2"])
+        #expect(self.playerService.isAwaitingWebRestoredTrack == false)
+    }
+
     @Test("Identity-switch reload is skipped while a restored session is deferred")
     func identitySwitchReloadSkippedWhenDeferred() {
         let songs = [

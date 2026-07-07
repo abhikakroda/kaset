@@ -96,6 +96,43 @@ struct PlayerServiceLibraryTests {
         #expect(reverted)
     }
 
+    @Test("likeCurrentTrack ignores old-account failure after new account status loads")
+    func likeCurrentTrackIgnoresOldAccountFailureAfterNewAccountStatusLoads() async {
+        self.mockClient.shouldThrowError = YTMusicError.networkError(underlying: URLError(.notConnectedToInternet))
+        self.playerService.currentTrack = TestFixtures.makeSong(id: "test-video")
+        self.playerService.currentTrackLikeStatus = .indifferent
+        SongLikeStatusManager.shared.setActiveAccountID("old-account")
+
+        self.playerService.likeCurrentTrack()
+        #expect(self.playerService.currentTrackLikeStatus == .like)
+
+        SongLikeStatusManager.shared.setActiveAccountID("new-account")
+        SongLikeStatusManager.shared.setStatus(.dislike, for: "test-video")
+        self.playerService.currentTrackLikeStatus = .dislike
+
+        try? await Task.sleep(for: .milliseconds(100))
+
+        #expect(self.playerService.currentTrackLikeStatus == .dislike)
+    }
+
+    @Test("likeCurrentTrack ignores old-account failure when new account status is unknown")
+    func likeCurrentTrackIgnoresOldAccountFailureWhenNewAccountStatusUnknown() async {
+        self.mockClient.shouldThrowError = YTMusicError.networkError(underlying: URLError(.notConnectedToInternet))
+        self.playerService.currentTrack = TestFixtures.makeSong(id: "test-video")
+        self.playerService.currentTrackLikeStatus = .indifferent
+        SongLikeStatusManager.shared.setActiveAccountID("old-account")
+
+        self.playerService.likeCurrentTrack()
+        #expect(self.playerService.currentTrackLikeStatus == .like)
+
+        SongLikeStatusManager.shared.setActiveAccountID("new-account")
+        self.playerService.currentTrackLikeStatus = .indifferent
+
+        try? await Task.sleep(for: .milliseconds(100))
+
+        #expect(self.playerService.currentTrackLikeStatus == .indifferent)
+    }
+
     @Test("likeCurrentTrack ignores stale completion after current track changes")
     func likeCurrentTrackIgnoresStaleCompletionAfterTrackChange() async {
         self.mockClient.rateSongDelay = .milliseconds(200)

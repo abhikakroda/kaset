@@ -9,17 +9,30 @@ extension SingletonPlayerWebView {
         let script = """
             (function() {
                 window.__kasetBlockAutoplay = \(blocked ? "true" : "false");
+                if (window.__kasetAutoplayBlockTimer) {
+                    clearInterval(window.__kasetAutoplayBlockTimer);
+                    window.__kasetAutoplayBlockTimer = null;
+                }
                 if (!window.__kasetBlockAutoplay) return 'autoplay-allowed';
                 window.__kasetAutoplayPending = false;
                 let ticks = 0;
                 const timer = setInterval(function() {
+                    if (!window.__kasetBlockAutoplay) {
+                        clearInterval(timer);
+                        if (window.__kasetAutoplayBlockTimer === timer) window.__kasetAutoplayBlockTimer = null;
+                        return;
+                    }
                     const video = document.querySelector('video');
                     if (video && !video.paused) {
                         try { video.pause(); } catch (_) {}
                     }
                     ticks += 1;
-                    if (ticks >= 20) clearInterval(timer);
+                    if (ticks >= 20) {
+                        clearInterval(timer);
+                        if (window.__kasetAutoplayBlockTimer === timer) window.__kasetAutoplayBlockTimer = null;
+                    }
                 }, 150);
+                window.__kasetAutoplayBlockTimer = timer;
                 return 'autoplay-blocked';
             })();
         """
@@ -147,6 +160,11 @@ extension SingletonPlayerWebView {
 
         let script = """
             (function() {
+                window.__kasetBlockAutoplay = false;
+                if (window.__kasetAutoplayBlockTimer) {
+                    clearInterval(window.__kasetAutoplayBlockTimer);
+                    window.__kasetAutoplayBlockTimer = null;
+                }
                 const video = document.querySelector('video');
                 if (video && video.paused) { video.play(); return 'played'; }
                 return 'already-playing';

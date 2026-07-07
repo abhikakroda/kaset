@@ -12,14 +12,9 @@ extension PlayerService {
             self.progress = progress
             self.duration = duration
             self.state = .paused
-            if isPlaying {
-                if self.isAwaitingWebRestoredTrack {
-                    SingletonPlayerWebView.shared.pause()
-                } else {
-                    Task { @MainActor in
-                        await self.resume()
-                    }
-                }
+            if isPlaying, !self.hasIssuedAutoplayPauseDuringDeferredRestore {
+                self.hasIssuedAutoplayPauseDuringDeferredRestore = true
+                SingletonPlayerWebView.shared.pause()
             }
             return
         }
@@ -53,6 +48,8 @@ extension PlayerService {
         guard let currentSong = queue[safe: currentIndex] else { return }
 
         self.clearRestoredPlaybackSessionState()
+        self.restoredPlaybackSessionGeneration &+= 1
+        let restoreGeneration = self.restoredPlaybackSessionGeneration
         self.clearForwardSkipNavigationStack()
         if let entrySources, entrySources.count == queue.count {
             self.setQueue(entries: zip(queue, entrySources).map { song, source in
@@ -69,6 +66,7 @@ extension PlayerService {
         self.songNearingEnd = false
         self.isKasetInitiatedPlayback = false
         self.isAwaitingWebRestoredTrack = true
+        self.hasIssuedAutoplayPauseDuringDeferredRestore = false
 
         let resolvedDuration = max(duration, currentSong.duration ?? 0)
         let clampedProgress = self.clampedRestoredProgress(progress, duration: resolvedDuration)
@@ -99,20 +97,25 @@ extension PlayerService {
             self.currentTrackLikeStatus = cachedStatus
         }
 
+        // At app launch the cache may be empty and the persisted song may lack likeStatus.
+        // Fetch immediately; the fetch only applies if this persisted song is still current.
+        Task { [videoId = currentSong.videoId] in
+            await self.fetchSongMetadata(videoId: videoId)
+        }
+
         // Give YT Music a chance to restore its server-synced track first.
         // If no track arrives from the web page in time, fall back to the persisted one.
         Task {
             try? await Task.sleep(for: .seconds(8))
-            guard self.isPendingRestoredLoadDeferred, self.isAwaitingWebRestoredTrack else { return }
+            guard self.restoredPlaybackSessionGeneration == restoreGeneration,
+                  self.isPendingRestoredLoadDeferred,
+                  self.isAwaitingWebRestoredTrack
+            else { return }
             self.logger.info("No server-restored track observed; falling back to persisted session track")
             self.pendingPlayVideoId = currentSong.videoId
             self.currentTrack = currentSong
             self.currentTrackHasVideo = currentSong.musicVideoType?.hasVideoContent ?? currentSong.hasVideo ?? false
             self.isAwaitingWebRestoredTrack = false
-
-            // At app launch the cache may be empty and the persisted song may lack likeStatus.
-            // Fetch metadata from the API to get the correct like status.
-            await self.fetchSongMetadata(videoId: currentSong.videoId)
         }
     }
 
@@ -121,6 +124,7 @@ extension PlayerService {
         self.pendingRestoredSeek = nil
         self.isPendingRestoredLoadDeferred = false
         self.shouldForcePendingRestoredLoad = false
+        self.restoredPlaybackSessionGeneration &+= 1
         self.isRestoringPlaybackSession = false
         self.shouldAutoResumeAfterRestoredLoad = false
         self.isAwaitingWebRestoredTrack = false

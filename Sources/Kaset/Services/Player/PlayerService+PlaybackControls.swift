@@ -84,6 +84,7 @@ extension PlayerService {
         self.logger.debug("play() called with videoId: \(videoId)")
         self.logger.info("Playing video: \(videoId)")
         self.clearRestoredPlaybackSessionState()
+        self.clearWebQueueInjectionState()
         self.currentEpisode = nil
         self.state = .loading
         self.songNearingEnd = false
@@ -132,6 +133,7 @@ extension PlayerService {
         self.logger.info("Playing song: \(song.title)")
         self.logger.debug("Web load strategy: \(String(describing: webLoadStrategy))")
         self.clearRestoredPlaybackSessionState()
+        self.clearWebQueueInjectionState()
         self.currentEpisode = episode
         // Brief `.loading` until the observer reports playback; in-place restarts may flash loading briefly.
         self.state = .loading
@@ -305,8 +307,37 @@ extension PlayerService {
         SingletonPlayerWebView.shared.setAutoplayBlocked(false)
 
         if self.isPendingRestoredLoadDeferred {
-            self.clearRestoredPlaybackSessionState()
+            if let pendingPlayVideoId = self.pendingPlayVideoId,
+               self.shouldLoadPendingVideoBeforePlayback
+            {
+                let strategy: SingletonPlayerWebView.VideoLoadStrategy = self.shouldForcePendingRestoredLoad ? .forceFullPageWhenSameVideoId : .standard
+                self.beginRestoredPlaybackLoad(autoResumeAfterSeek: true)
+                self.showMiniPlayer = false
+                self.state = .loading
+                self.isKasetInitiatedPlayback = true
+                if SingletonPlayerWebView.shared.webView != nil {
+                    SingletonPlayerWebView.shared.loadVideo(videoId: pendingPlayVideoId, strategy: strategy)
+                    self.shouldForcePendingRestoredLoad = false
+                }
+                return
+            }
 
+            if let targetProgress = self.pendingRestoredSeek {
+                self.beginRestoredPlaybackLoad(autoResumeAfterSeek: true)
+                self.showMiniPlayer = false
+                self.state = .loading
+                self.isKasetInitiatedPlayback = true
+                if SingletonPlayerWebView.shared.webView != nil {
+                    SingletonPlayerWebView.shared.seek(to: targetProgress)
+                    SingletonPlayerWebView.shared.play()
+                } else {
+                    await self.evaluatePlayerCommand("seekTo(\(targetProgress), true)")
+                    await self.evaluatePlayerCommand("play")
+                }
+                return
+            }
+
+            self.clearRestoredPlaybackSessionState()
             self.showMiniPlayer = false
             self.state = .loading
             self.isKasetInitiatedPlayback = true
@@ -370,11 +401,19 @@ extension PlayerService {
                 }
             }
 
-            guard let targetIndex else { return }
+            guard let targetIndex, let targetSong = self.queue[safe: targetIndex] else { return }
             self.pushForwardSkipStackIfLeavingIndex(for: targetIndex)
-            self.advanceQueueStateForNativeNavigation(to: targetIndex)
+            if self.injectedWebQueueVideoId == targetSong.videoId {
+                self.advanceQueueStateForNativeNavigation(to: targetIndex)
+                self.injectedWebQueueVideoId = nil
+                SingletonPlayerWebView.shared.next()
+            } else {
+                self.injectedWebQueueVideoId = nil
+                await self.loadQueueSongForNavigation(at: targetIndex)
+            }
+            await self.fetchMoreMixSongsIfNeeded()
             await self.fillSmartShuffleWindow()
-            SingletonPlayerWebView.shared.next()
+            self.saveQueueForPersistence(syncWebQueue: false)
             return
         }
 
@@ -403,14 +442,12 @@ extension PlayerService {
             }
 
             if let priorIndex = self.popForwardSkipIndex(), self.queue.indices.contains(priorIndex) {
-                self.advanceQueueStateForNativeNavigation(to: priorIndex)
-                SingletonPlayerWebView.shared.previous()
+                await self.loadQueueSongForNavigation(at: priorIndex)
                 return
             }
 
             if self.currentIndex > 0 {
-                self.advanceQueueStateForNativeNavigation(to: self.currentIndex - 1)
-                SingletonPlayerWebView.shared.previous()
+                await self.loadQueueSongForNavigation(at: self.currentIndex - 1)
             } else {
                 await self.seek(to: 0)
             }
@@ -431,8 +468,16 @@ extension PlayerService {
         }
     }
 
+    /// Navigates to a queue song through Kaset's deterministic load path.
+    private func loadQueueSongForNavigation(at index: Int) async {
+        guard let song = self.queue[safe: index] else { return }
+        self.currentIndex = index
+        await self.play(song: song)
+        self.saveQueueForPersistence()
+    }
+
     /// Updates Kaset's local queue pointer for native WebView queue navigation without forcing a page load.
-    private func advanceQueueStateForNativeNavigation(to index: Int) {
+    func advanceQueueStateForNativeNavigation(to index: Int) {
         guard let song = self.queue[safe: index] else { return }
 
         let trackChanged = self.currentTrack?.videoId != song.videoId
@@ -440,6 +485,9 @@ extension PlayerService {
         self.currentTrack = song
         self.currentEpisode = nil
         self.pendingPlayVideoId = song.videoId
+        self.progress = 0
+        self.duration = song.duration ?? 0
+        self.state = .loading
         self.isKasetInitiatedPlayback = true
         self.songNearingEnd = false
         self.shouldSuppressAutoplayAfterQueueEnd = false
@@ -458,7 +506,7 @@ extension PlayerService {
             self.currentTrackLikeStatus = song.likeStatus ?? self.currentTrackLikeStatus
         }
 
-        self.saveQueueForPersistence()
+        self.saveQueueForPersistence(syncWebQueue: false)
     }
 
     /// Seeks to a specific time.

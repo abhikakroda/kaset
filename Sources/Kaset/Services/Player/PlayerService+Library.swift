@@ -37,9 +37,14 @@ extension PlayerService {
                 )
             }
 
-            guard SongLikeStatusManager.shared.activeAccountID == activeAccountID,
-                  self.currentTrack?.videoId == track.videoId
-            else {
+            guard self.currentTrack?.videoId == track.videoId else { return }
+
+            let currentAccountID = SongLikeStatusManager.shared.activeAccountID
+            if currentAccountID != activeAccountID {
+                guard let currentAccountStatus = SongLikeStatusManager.shared.status(for: track.videoId, accountID: currentAccountID) else {
+                    return
+                }
+                self.currentTrackLikeStatus = currentAccountStatus
                 return
             }
 
@@ -80,9 +85,14 @@ extension PlayerService {
                 )
             }
 
-            guard SongLikeStatusManager.shared.activeAccountID == activeAccountID,
-                  self.currentTrack?.videoId == track.videoId
-            else {
+            guard self.currentTrack?.videoId == track.videoId else { return }
+
+            let currentAccountID = SongLikeStatusManager.shared.activeAccountID
+            if currentAccountID != activeAccountID {
+                guard let currentAccountStatus = SongLikeStatusManager.shared.status(for: track.videoId, accountID: currentAccountID) else {
+                    return
+                }
+                self.currentTrackLikeStatus = currentAccountStatus
                 return
             }
 

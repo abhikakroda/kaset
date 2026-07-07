@@ -2,6 +2,24 @@ import Foundation
 import Testing
 @testable import Kaset
 
+@MainActor
+private extension PlayerService {
+    var expectedQueueIndexForTesting: Int? {
+        guard !self.queue.isEmpty else { return nil }
+        if self.repeatMode == .one {
+            return self.currentIndex
+        }
+        guard !self.shuffleEnabled else { return nil }
+        if self.currentIndex < self.queue.count - 1 {
+            return self.currentIndex + 1
+        }
+        if self.repeatMode == .all {
+            return 0
+        }
+        return nil
+    }
+}
+
 // MARK: - PlayerServiceWebQueueSyncTests
 
 /// Web queue sync, next/previous stack, repeat-one, metadata drift, and radio-related PlayerService tests.
@@ -54,6 +72,120 @@ struct PlayerServiceWebQueueSyncTests {
         await self.playerService.previous()
         #expect(self.playerService.currentIndex == 0)
         #expect(self.playerService.pendingPlayVideoId == "v1")
+    }
+
+    @Test("Native next does not pre-inject next-next track while WebView is still on current track")
+    func nativeNextDoesNotPreinjectNextNextTrack() async {
+        let songs = [
+            Song(id: "1", title: "Song 1", artists: [], album: nil, duration: 180, thumbnailURL: nil, videoId: "v1"),
+            Song(id: "2", title: "Song 2", artists: [], album: nil, duration: 200, thumbnailURL: nil, videoId: "v2"),
+            Song(id: "3", title: "Song 3", artists: [], album: nil, duration: 220, thumbnailURL: nil, videoId: "v3"),
+        ]
+        await self.playerService.playQueue(songs, startingAt: 0)
+        self.playerService.state = .playing
+        self.playerService.injectedWebQueueVideoId = "v2"
+
+        await self.playerService.next()
+
+        #expect(self.playerService.currentIndex == 1)
+        #expect(self.playerService.pendingPlayVideoId == "v2")
+        #expect(self.playerService.injectedWebQueueVideoId == nil)
+        #expect(self.playerService.pendingWebQueueInjectionVideoId == nil)
+    }
+
+    @Test("Native next resets progress before persisting target queue song")
+    func nativeNextResetsProgressBeforePersistingTargetQueueSong() async {
+        let songs = [
+            Song(id: "1", title: "Song 1", artists: [], album: nil, duration: 180, thumbnailURL: nil, videoId: "v1"),
+            Song(id: "2", title: "Song 2", artists: [], album: nil, duration: 200, thumbnailURL: nil, videoId: "v2"),
+        ]
+        await self.playerService.playQueue(songs, startingAt: 0)
+        self.playerService.state = .playing
+        self.playerService.progress = 179
+        self.playerService.duration = 180
+        self.playerService.injectedWebQueueVideoId = "v2"
+
+        await self.playerService.next()
+
+        #expect(self.playerService.currentIndex == 1)
+        #expect(self.playerService.currentTrack?.videoId == "v2")
+        #expect(self.playerService.progress == 0)
+        #expect(self.playerService.duration == 200)
+    }
+
+    @Test("Native next clears consumed injection marker for duplicate video IDs")
+    func nativeNextClearsConsumedInjectionMarkerForDuplicateVideoIDs() async {
+        let duplicate = Song(id: "dup", title: "Duplicate", artists: [], album: nil, duration: 180, thumbnailURL: nil, videoId: "v2")
+        let songs = [
+            Song(id: "1", title: "Song 1", artists: [], album: nil, duration: 180, thumbnailURL: nil, videoId: "v1"),
+            duplicate,
+            duplicate,
+        ]
+        await self.playerService.playQueue(songs, startingAt: 0)
+        self.playerService.state = .playing
+        self.playerService.injectedWebQueueVideoId = "v2"
+
+        await self.playerService.next()
+
+        #expect(self.playerService.currentIndex == 1)
+        #expect(self.playerService.injectedWebQueueVideoId == nil)
+        #expect(self.playerService.expectedQueueIndexForTesting == 2)
+    }
+
+    @Test("Saving an empty queue clears web queue injection state")
+    func savingEmptyQueueClearsWebQueueInjectionState() {
+        self.playerService.injectedWebQueueVideoId = "stale"
+        self.playerService.pendingWebQueueInjectionVideoId = "stale"
+
+        self.playerService.saveQueueForPersistence()
+
+        #expect(self.playerService.injectedWebQueueVideoId == nil)
+        #expect(self.playerService.pendingWebQueueInjectionVideoId == nil)
+    }
+
+    @Test("Removing injected next song clears web queue injection state")
+    func removingInjectedNextSongClearsWebQueueInjectionState() async {
+        let songs = [
+            Song(id: "1", title: "Song 1", artists: [], album: nil, duration: 180, thumbnailURL: nil, videoId: "v1"),
+            Song(id: "2", title: "Song 2", artists: [], album: nil, duration: 200, thumbnailURL: nil, videoId: "v2"),
+        ]
+        await self.playerService.playQueue(songs, startingAt: 0)
+        self.playerService.state = .playing
+        self.playerService.injectedWebQueueVideoId = "v2"
+
+        self.playerService.removeFromQueue(videoIds: ["v2"])
+
+        #expect(self.playerService.queue.map(\.videoId) == ["v1"])
+        #expect(self.playerService.injectedWebQueueVideoId == nil)
+        #expect(self.playerService.pendingWebQueueInjectionVideoId == nil)
+    }
+
+    @Test("Web queue injection result is trusted only after successful current next confirmation")
+    func webQueueInjectionResultRequiresSuccessfulExpectedNextConfirmation() async {
+        let songs = [
+            Song(id: "1", title: "Song 1", artists: [], album: nil, duration: 180, thumbnailURL: nil, videoId: "v1"),
+            Song(id: "2", title: "Song 2", artists: [], album: nil, duration: 200, thumbnailURL: nil, videoId: "v2"),
+            Song(id: "3", title: "Song 3", artists: [], album: nil, duration: 220, thumbnailURL: nil, videoId: "v3"),
+        ]
+        await self.playerService.playQueue(songs, startingAt: 0)
+
+        self.playerService.pendingWebQueueInjectionVideoId = "v3"
+        self.playerService.handleWebQueueInjectionResult(videoId: "v3", success: true, reason: nil)
+        #expect(self.playerService.injectedWebQueueVideoId == nil)
+        #expect(self.playerService.pendingWebQueueInjectionVideoId == nil)
+
+        self.playerService.pendingWebQueueInjectionVideoId = "v2"
+        self.playerService.handleWebQueueInjectionResult(videoId: "v2", success: false, reason: "timeout")
+        #expect(self.playerService.injectedWebQueueVideoId == nil)
+        #expect(self.playerService.pendingWebQueueInjectionVideoId == nil)
+
+        self.playerService.handleWebQueueInjectionResult(videoId: "v2", success: true, reason: "stale")
+        #expect(self.playerService.injectedWebQueueVideoId == nil)
+
+        self.playerService.pendingWebQueueInjectionVideoId = "v2"
+        self.playerService.handleWebQueueInjectionResult(videoId: "v2", success: true, reason: "swapped")
+        #expect(self.playerService.injectedWebQueueVideoId == "v2")
+        #expect(self.playerService.pendingWebQueueInjectionVideoId == nil)
     }
 
     // MARK: - Next with Shuffle Tests
@@ -515,6 +647,27 @@ struct PlayerServiceWebQueueSyncTests {
         #expect(self.playerService.currentIndex == 1)
         #expect(self.playerService.currentTrack?.videoId == "v2")
         #expect(self.playerService.currentTrack?.title == "Song 2")
+    }
+
+    @Test("Injected track end waits for WebView confirmation before injecting next-next")
+    func injectedTrackEndDefersNextNextInjectionUntilPlaybackConfirmation() async {
+        let songs = [
+            Song(id: "1", title: "Song 1", artists: [], album: nil, duration: 180, thumbnailURL: nil, videoId: "v1"),
+            Song(id: "2", title: "Song 2", artists: [], album: nil, duration: 200, thumbnailURL: nil, videoId: "v2"),
+            Song(id: "3", title: "Song 3", artists: [], album: nil, duration: 220, thumbnailURL: nil, videoId: "v3"),
+        ]
+
+        await self.playerService.playQueue(songs, startingAt: 0)
+        self.playerService.state = .playing
+        self.playerService.injectedWebQueueVideoId = "v2"
+
+        await self.playerService.handleTrackEnded(observedVideoId: "v1")
+
+        #expect(self.playerService.currentIndex == 1)
+        #expect(self.playerService.currentTrack?.videoId == "v2")
+        #expect(self.playerService.state == .loading)
+        #expect(self.playerService.injectedWebQueueVideoId == nil)
+        #expect(self.playerService.pendingWebQueueInjectionVideoId == nil)
     }
 
     @Test("Stale track-ended events do not double-advance the queue")

@@ -299,11 +299,13 @@ final class SingletonPlayerWebView {
         // Dynamic startup state is refreshed before each full page load so the
         // next document gets current volume/autoplay flags at document start.
 
-        let shouldBlockAutoplay = playerService.isRestoringPlaybackSession || playerService.pendingPlayVideoId == nil
+        let shouldBlockAutoplay = playerService.isRestoringPlaybackSession
+            || playerService.isPendingRestoredLoadDeferred
+            || playerService.pendingPlayVideoId == nil
 
         self.installUserScripts(
             on: configuration.userContentController,
-            isRestoringPlaybackSession: shouldBlockAutoplay,
+            shouldBlockAutoplay: shouldBlockAutoplay,
             targetVolume: playerService.volume
         )
 
@@ -455,7 +457,7 @@ final class SingletonPlayerWebView {
 
         self.installUserScripts(
             on: webView.configuration.userContentController,
-            isRestoringPlaybackSession: isRestoringPlaybackSession,
+            shouldBlockAutoplay: isRestoringPlaybackSession,
             targetVolume: currentVolume
         )
 
@@ -484,11 +486,20 @@ final class SingletonPlayerWebView {
             window.__kasetBlockAutoplay = \(isRestoringPlaybackSession ? "true" : "false");
             """
             webView.evaluateJavaScript(prepareScript, completionHandler: nil)
-            self.navigateViaRouter(videoId: videoId, fallbackURL: urlToLoad)
+            self.navigateViaRouter(videoId: videoId, fallbackURL: urlToLoad, generation: generation)
         }
     }
 
-    private func navigateViaRouter(videoId: String, fallbackURL: URL) {
+    nonisolated static func javaScriptStringLiteral(_ value: String) -> String {
+        guard let data = try? JSONEncoder().encode(value),
+              let literal = String(data: data, encoding: .utf8)
+        else {
+            return "\"\""
+        }
+        return literal
+    }
+
+    private func navigateViaRouter(videoId: String, fallbackURL: URL, generation: Int) {
         guard let webView else { return }
 
         let host = webView.url?.host ?? ""
@@ -498,15 +509,13 @@ final class SingletonPlayerWebView {
             return
         }
 
-        let escapedVideoId = videoId
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "'", with: "\\'")
+        let videoIdLiteral = Self.javaScriptStringLiteral(videoId)
         let routerScript = """
         (function() {
             const app = document.querySelector('ytmusic-app');
             if (!app || typeof app.resolveCommand !== 'function') return false;
             try {
-                app.resolveCommand({ watchEndpoint: { videoId: '\(escapedVideoId)' } });
+                app.resolveCommand({ watchEndpoint: { videoId: \(videoIdLiteral) } });
                 return true;
             } catch (_) {
                 return false;
@@ -516,6 +525,7 @@ final class SingletonPlayerWebView {
 
         webView.evaluateJavaScript(routerScript) { [weak self] result, _ in
             guard let self, let webView = self.webView else { return }
+            guard self.loadGeneration == generation, self.currentVideoId == videoId else { return }
             let didNavigate = result as? Bool ?? false
             if didNavigate {
                 self.logger.info("Router navigation started for video: \(videoId)")
@@ -529,15 +539,15 @@ final class SingletonPlayerWebView {
     /// Returns the JS snippet that hands the autoplay intent to the freshly loaded
     /// page's window. Restored sessions suppress autoplay so the reconcile path
     /// resumes at the saved seek rather than at 0s.
-    nonisolated static func autoplayIntentScript(isRestoringPlaybackSession: Bool) -> String {
+    nonisolated static func autoplayIntentScript(shouldBlockAutoplay: Bool) -> String {
         """
-        window.__kasetAutoplayPending = \(isRestoringPlaybackSession ? "false" : "true");
-        window.__kasetBlockAutoplay = \(isRestoringPlaybackSession ? "true" : "false");
+        window.__kasetAutoplayPending = \(shouldBlockAutoplay ? "false" : "true");
+        window.__kasetBlockAutoplay = \(shouldBlockAutoplay ? "true" : "false");
         """
     }
 
     nonisolated static func pageBootstrapScript(
-        isRestoringPlaybackSession: Bool,
+        shouldBlockAutoplay: Bool,
         targetVolume: Double
     ) -> String {
         let clampedVolume = if targetVolume.isFinite {
@@ -547,14 +557,14 @@ final class SingletonPlayerWebView {
         }
 
         return """
-            \(Self.autoplayIntentScript(isRestoringPlaybackSession: isRestoringPlaybackSession))
+            \(Self.autoplayIntentScript(shouldBlockAutoplay: shouldBlockAutoplay))
             window.__kasetTargetVolume = \(clampedVolume);
         """
     }
 
     private func installUserScripts(
         on contentController: WKUserContentController,
-        isRestoringPlaybackSession: Bool,
+        shouldBlockAutoplay: Bool,
         targetVolume: Double
     ) {
         contentController.removeAllUserScripts()
@@ -563,7 +573,7 @@ final class SingletonPlayerWebView {
         // `didFinish` is too late on fast or cached player loads.
         let pageBootstrapScript = WKUserScript(
             source: Self.pageBootstrapScript(
-                isRestoringPlaybackSession: isRestoringPlaybackSession,
+                shouldBlockAutoplay: shouldBlockAutoplay,
                 targetVolume: targetVolume
             ),
             injectionTime: .atDocumentStart,
@@ -614,11 +624,14 @@ final class SingletonPlayerWebView {
     func refreshInstalledUserScripts() {
         guard let webView else { return }
 
-        let currentVolume = self.coordinator?.playerService.volume ?? 1.0
-        let isRestoringPlaybackSession = self.coordinator?.playerService.isRestoringPlaybackSession ?? false
+        let playerService = self.coordinator?.playerService
+        let currentVolume = playerService?.volume ?? 1.0
+        let shouldBlockAutoplay = playerService?.isRestoringPlaybackSession == true
+            || playerService?.isPendingRestoredLoadDeferred == true
+            || playerService?.pendingPlayVideoId == nil
         self.installUserScripts(
             on: webView.configuration.userContentController,
-            isRestoringPlaybackSession: isRestoringPlaybackSession,
+            shouldBlockAutoplay: shouldBlockAutoplay,
             targetVolume: currentVolume
         )
     }
@@ -658,6 +671,8 @@ final class SingletonPlayerWebView {
                 self.handleLyricsTimeUpdate(body: body)
             case "PLAYBACK_AUDIO_QUALITY_STATS":
                 Self.logAudioQualityStats(body: body, observedVideoId: observedVideoId)
+            case "QUEUE_INJECTION_RESULT":
+                self.handleQueueInjectionResult(body: body, observedVideoId: observedVideoId)
             case "STATE_UPDATE":
                 self.handleStateUpdate(body: body, observedVideoId: observedVideoId)
             default:
@@ -687,6 +702,20 @@ final class SingletonPlayerWebView {
 
             Task { @MainActor in
                 self.playerService.currentTimeMs = Int(time * 1000)
+            }
+        }
+
+        private func handleQueueInjectionResult(body: [String: Any], observedVideoId: String?) {
+            guard let observedVideoId else { return }
+            let success = body["success"] as? Bool ?? false
+            let reason = body["reason"] as? String
+
+            Task { @MainActor in
+                self.playerService.handleWebQueueInjectionResult(
+                    videoId: observedVideoId,
+                    success: success,
+                    reason: reason
+                )
             }
         }
 
@@ -1011,7 +1040,10 @@ final class SingletonPlayerWebView {
                     }
                 })();
             """
-            SingletonPlayerWebView.shared.setAutoplayBlocked(self.playerService.isPendingRestoredLoadDeferred)
+            let shouldBlockAutoplay = self.playerService.isRestoringPlaybackSession
+                || self.playerService.isPendingRestoredLoadDeferred
+                || self.playerService.pendingPlayVideoId == nil
+            SingletonPlayerWebView.shared.setAutoplayBlocked(shouldBlockAutoplay)
 
             webView.evaluateJavaScript(applyVolumeScript) { result, error in
                 if let error {

@@ -196,8 +196,14 @@ final class PlayerService: NSObject, PlayerServiceProtocol {
     /// Whether a restored load should automatically resume after seeking to the saved position.
     var shouldAutoResumeAfterRestoredLoad: Bool = false
 
+    /// Monotonic generation for deferred restored-session fallback tasks.
+    var restoredPlaybackSessionGeneration: Int = 0
+
     /// Whether startup is waiting for YT Music to report its own server-restored track.
     var isAwaitingWebRestoredTrack: Bool = false
+
+    /// Whether Kaset has already issued the one-shot defensive pause while a deferred restored session is awaiting web metadata.
+    var hasIssuedAutoplayPauseDuringDeferredRestore: Bool = false
 
     /// Like status of the current track.
     var currentTrackLikeStatus: LikeStatus = .indifferent
@@ -490,6 +496,12 @@ final class PlayerService: NSObject, PlayerServiceProtocol {
         self.currentQueueEntryID = self.queueStorage[safe: self.currentIndex]?.id
     }
 
+    func clearWebQueueInjectionState() {
+        SingletonPlayerWebView.shared.cancelQueueInjection()
+        self.injectedWebQueueVideoId = nil
+        self.pendingWebQueueInjectionVideoId = nil
+    }
+
     /// Records the current index before `next()` moves to `newIndex` (no-op if unchanged).
     func pushForwardSkipStackIfLeavingIndex(for newIndex: Int) {
         let from = self.currentIndex
@@ -573,10 +585,15 @@ final class PlayerService: NSObject, PlayerServiceProtocol {
     /// Flag to suppress YouTube autoplay after the native queue has finished.
     var shouldSuppressAutoplayAfterQueueEnd: Bool = false
 
-    /// Video ID of the song last injected into YouTube Music's native "Up Next" queue.
+    /// Video ID of the song last confirmed as injected into YouTube Music's native "Up Next" queue.
     /// Used to avoid duplicate injections and to detect when YouTube has auto-advanced
     /// to the injected track (enabling gapless transition without calling `loadVideo`).
     var injectedWebQueueVideoId: String?
+
+    /// Video ID currently being injected into YouTube Music's native "Up Next" queue.
+    /// This is intentionally separate from ``injectedWebQueueVideoId`` so track-end logic
+    /// only trusts injections after the WebView script confirms the queue payload was swapped.
+    var pendingWebQueueInjectionVideoId: String?
 
     /// Grace period instant - don't auto-close video window shortly after opening (uses monotonic clock)
     var videoWindowOpenedAt: ContinuousClock.Instant?

@@ -721,9 +721,10 @@ extension PlayerService {
     private static let savedPlaybackSessionKey = "kaset.saved.playbackSession"
 
     /// Saves the current queue to UserDefaults for restoration on next launch.
-    func saveQueueForPersistence() {
+    func saveQueueForPersistence(syncWebQueue shouldSyncWebQueue: Bool = true) {
         let queue = self.queue
         guard !queue.isEmpty else {
+            self.clearWebQueueInjectionState()
             if self.suppressNextEmptyQueuePersistence {
                 self.suppressNextEmptyQueuePersistence = false
                 self.logger.info("Skipped clearing saved playback session after guest-startup cleanup")
@@ -742,6 +743,7 @@ extension PlayerService {
         let persistedEntries = Self.stripSuggested(from: self.queueEntries, keepingCurrentID: currentID)
         let persistableQueue = persistedEntries.map(\.song)
         guard !persistableQueue.isEmpty else {
+            self.clearWebQueueInjectionState()
             self.removeSavedPlaybackSession()
             return
         }
@@ -784,8 +786,10 @@ extension PlayerService {
             self.restoredPlaybackSessionOwnerScope = ownerScope
             self.logger.info("Saved playback session with \(persistedQueue.count) songs at index \(safeIndex)")
 
-            // Re-sync the web queue in case the queue order or next song changed
-            self.syncWebQueue()
+            if shouldSyncWebQueue {
+                // Re-sync the web queue in case the queue order or next song changed
+                self.syncWebQueue()
+            }
         } catch {
             self.logger.error("Failed to save playback session: \(error.localizedDescription)")
         }
