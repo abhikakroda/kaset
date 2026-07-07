@@ -77,6 +77,16 @@
             <cocoa class="KasetDislikeTrackCommand"/>
         </command>
 
+        <command name="get play queue" code="Kastgque" description="Get the current playing queue as JSON.">
+            <cocoa class="KasetGetPlayQueueCommand"/>
+            <result type="text" description="JSON string with the current playing queue."/>
+        </command>
+
+        <command name="play track at index" code="Kastplix" description="Play a specific track from the queue by its index.">
+            <cocoa class="KasetPlayTrackAtIndexCommand"/>
+            <direct-parameter type="integer" description="The 1-based index of the track in the queue to play."/>
+        </command>
+
     </suite>
 
 </dictionary>
