@@ -452,8 +452,8 @@ extension PlayerService {
             }
         }
 
-        if let tokens = song.feedbackTokens {
-            self.currentTrackFeedbackTokens = tokens
+        if let details = song.feedbackTokens {
+            self.currentTrackFeedbackTokens = details
             self.currentTrackInLibrary = song.isInLibrary ?? false
             self.currentTrackLikeStatus = song.likeStatus ?? self.currentTrackLikeStatus
         }
