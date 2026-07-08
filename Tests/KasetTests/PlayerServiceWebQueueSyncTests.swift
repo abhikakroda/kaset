@@ -98,6 +98,41 @@ struct PlayerServiceWebQueueSyncTests {
         #expect(self.playerService.progress == 0)
     }
 
+    @Test("Stale metadata after manual next cannot realign backward before intended confirmation")
+    func staleMetadataAfterManualNextCannotRealignBackwardBeforeIntendedConfirmation() async {
+        let songs = [
+            Song(id: "1", title: "Song 1", artists: [], album: nil, duration: 180, thumbnailURL: nil, videoId: "v1"),
+            Song(id: "2", title: "Song 2", artists: [], album: nil, duration: 200, thumbnailURL: nil, videoId: "v2"),
+            Song(id: "3", title: "Song 3", artists: [], album: nil, duration: 220, thumbnailURL: nil, videoId: "v3"),
+        ]
+        await self.playerService.playQueue(songs, startingAt: 0)
+        self.playerService.state = .playing
+
+        await self.playerService.next()
+        #expect(self.playerService.currentIndex == 1)
+        #expect(self.playerService.currentTrack?.videoId == "v2")
+
+        // YouTube can emit stale metadata for the previous video while Kaset's
+        // manual navigation load is still in flight. Multiple stale frames must
+        // not be allowed to realign the native queue back to the old song.
+        self.playerService.updateTrackMetadata(
+            title: "Song 1",
+            artist: "",
+            thumbnailUrl: "",
+            videoId: "v1"
+        )
+        self.playerService.updateTrackMetadata(
+            title: "Song 1",
+            artist: "",
+            thumbnailUrl: "",
+            videoId: "v1"
+        )
+
+        #expect(self.playerService.currentIndex == 1)
+        #expect(self.playerService.currentTrack?.videoId == "v2")
+        #expect(self.playerService.pendingPlayVideoId == "v2")
+    }
+
     @Test("Manual next ignores native injection marker and loads target deterministically")
     func manualNextIgnoresNativeInjectionMarkerAndLoadsTargetDeterministically() async {
         let songs = [

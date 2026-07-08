@@ -327,7 +327,11 @@ extension PlayerService {
         self.logger.info(
             "YouTube loaded different track '\(title)' (\(resolvedVideoId)), re-playing intended track '\(intendedSong.title)'"
         )
-        self.isKasetInitiatedPlayback = false
+        // Keep the Kaset-initiated guard active until the intended video is
+        // actually confirmed. WebView metadata can emit multiple stale frames
+        // for the previous/native queue item while our manual navigation load is
+        // still in flight; dropping the guard here lets a later stale frame
+        // realign `currentIndex` backward through `handleUnexpectedQueueDriftIfNeeded`.
         Task {
             await self.play(song: intendedSong, webLoadStrategy: .forceFullPageWhenSameVideoId)
         }
