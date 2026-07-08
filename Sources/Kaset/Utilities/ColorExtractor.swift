@@ -2,6 +2,8 @@ import AppKit
 import CoreGraphics
 import SwiftUI
 
+// MARK: - ColorExtractor
+
 /// Extracts dominant colors from images for UI accent backgrounds.
 enum ColorExtractor {
     /// Represents a weighted color sample for averaging.
@@ -13,7 +15,7 @@ enum ColorExtractor {
     }
 
     /// Represents extracted color palette from an image.
-    struct ColorPalette: Equatable {
+    struct ColorPalette: Equatable, Sendable {
         /// Dark mode primary color (darker, saturated).
         let primary: Color
         /// Dark mode secondary color (even darker).
@@ -27,6 +29,17 @@ enum ColorExtractor {
             secondary: Color(nsColor: NSColor(white: 0.08, alpha: 1)),
             lightTint: Color(nsColor: NSColor.controlAccentColor).opacity(0.3)
         )
+    }
+
+    /// Returns an image-derived palette for a URL, reusing a shared cache so accent
+    /// backgrounds across detail views do not redownload or re-extract the same
+    /// artwork. `targetSize` is expressed in display points; `ImageCache` applies
+    /// the Retina multiplier while downsampling.
+    static func cachedPalette(
+        for url: URL,
+        targetSize: CGSize = CGSize(width: 64, height: 64)
+    ) async -> ColorPalette {
+        await ColorPaletteCache.shared.palette(for: url, targetSize: targetSize)
     }
 
     /// Extracts a color palette from an NSImage.
@@ -186,5 +199,53 @@ enum ColorExtractor {
             brightness: adjustedBrightness,
             alpha: 1.0
         )
+    }
+}
+
+// MARK: - ColorPaletteCache
+
+/// Shared palette cache backed by `ImageCache`, with an injectable image cache so
+/// tests can verify network coalescing without touching the app-wide singleton.
+actor ColorPaletteCache {
+    static let shared = ColorPaletteCache()
+
+    private let imageCache: ImageCache
+    private var palettes: [String: ColorExtractor.ColorPalette] = [:]
+    private var inFlight: [String: Task<ColorExtractor.ColorPalette?, Never>] = [:]
+
+    init(imageCache: ImageCache = ImageCache.shared) {
+        self.imageCache = imageCache
+    }
+
+    func palette(for url: URL, targetSize: CGSize) async -> ColorExtractor.ColorPalette {
+        let key = self.cacheKey(for: url, targetSize: targetSize)
+        if let cached = self.palettes[key] {
+            return cached
+        }
+        if let existing = self.inFlight[key] {
+            return await existing.value ?? .default
+        }
+
+        let imageCache = self.imageCache
+        let task = Task<ColorExtractor.ColorPalette?, Never>(priority: .utility) {
+            guard let image = await imageCache.image(for: url, targetSize: targetSize) else {
+                return nil
+            }
+            return ColorExtractor.extractPalette(from: image)
+        }
+
+        self.inFlight[key] = task
+        let palette = await task.value
+        self.inFlight[key] = nil
+
+        guard let palette else {
+            return .default
+        }
+        self.palettes[key] = palette
+        return palette
+    }
+
+    private func cacheKey(for url: URL, targetSize: CGSize) -> String {
+        "\(url.absoluteString)@\(Int(targetSize.width))x\(Int(targetSize.height))"
     }
 }
