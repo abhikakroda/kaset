@@ -171,6 +171,7 @@ final class MockYTMusicClient: YTMusicClientProtocol { // swiftlint:disable:this
     private(set) var getPersonalizedRecommendationsCallCount = 0
     private(set) var getPersonalizedRecommendationsContinuationCalled = false
     private(set) var getPersonalizedRecommendationsContinuationCallCount = 0
+    private(set) var getPodcastsContinuationCallCount = 0
     private(set) var getExploreCalled = false
     private(set) var getExploreCallCount = 0
     private(set) var getHistoryCallCount = 0
@@ -407,6 +408,7 @@ final class MockYTMusicClient: YTMusicClientProtocol { // swiftlint:disable:this
     }
 
     func getPodcastsContinuation() async throws -> [PodcastSection]? {
+        self.getPodcastsContinuationCallCount += 1
         if let error = shouldThrowError { throw error }
         guard self._podcastsContinuationIndex < self.podcastsContinuationSections.count else {
             return nil
@@ -1013,6 +1015,7 @@ final class MockYTMusicClient: YTMusicClientProtocol { // swiftlint:disable:this
         self.getPersonalizedRecommendationsCallCount = 0
         self.getPersonalizedRecommendationsContinuationCalled = false
         self.getPersonalizedRecommendationsContinuationCallCount = 0
+        self.getPodcastsContinuationCallCount = 0
         self._personalizedRecommendationsContinuationIndex = 0
         self.getExploreCalled = false
         self.getExploreCallCount = 0

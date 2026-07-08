@@ -75,6 +75,16 @@ struct PodcastsView: View {
                 ForEach(self.viewModel.sections) { section in
                     self.sectionView(section)
                 }
+
+                if self.viewModel.hasMoreSections || self.viewModel.loadingState == .loadingMore {
+                    LoadMoreFooter(
+                        isLoading: self.viewModel.loadingState == .loadingMore,
+                        title: "Load More",
+                        loadingTitle: "Loading more..."
+                    ) {
+                        await self.viewModel.loadMore()
+                    }
+                }
             }
             // Edge-to-edge so shelves slide under the glass sidebar; resting
             // inset is restored per-shelf via contentInset.
@@ -305,7 +315,11 @@ struct PodcastShowView: View {
             String(localized: "Subscription Error"),
             isPresented: Binding(
                 get: { self.subscriptionError != nil },
-                set: { if !$0 { self.subscriptionError = nil } }
+                set: {
+                    if !$0 {
+                        self.subscriptionError = nil
+                    }
+                }
             )
         ) {
             Button(String(localized: "OK")) { self.subscriptionError = nil }
