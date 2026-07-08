@@ -96,6 +96,21 @@ struct PlayerServiceLibraryTests {
         #expect(reverted)
     }
 
+    @Test("likeCurrentTrack rolls back to visible status when manager cache is stale")
+    func likeCurrentTrackRollsBackToVisibleStatusWhenManagerCacheIsStale() async {
+        let song = TestFixtures.makeSong(id: "stale-like-cache-video")
+        self.playerService.currentTrack = song
+        self.playerService.currentTrackLikeStatus = .indifferent
+        SongLikeStatusManager.shared.setStatus(.like, for: song.videoId)
+        self.mockClient.shouldThrowError = YTMusicError.networkError(underlying: URLError(.notConnectedToInternet))
+
+        self.playerService.likeCurrentTrack()
+        #expect(self.playerService.currentTrackLikeStatus == .like)
+
+        let reverted = await self.waitUntilLikeStatus(.indifferent)
+        #expect(reverted)
+    }
+
     @Test("likeCurrentTrack ignores stale completion after current track changes")
     func likeCurrentTrackIgnoresStaleCompletionAfterTrackChange() async {
         self.mockClient.rateSongDelay = .milliseconds(200)
@@ -131,6 +146,24 @@ struct PlayerServiceLibraryTests {
 
         #expect(self.mockClient.rateSongRatings.first == .indifferent)
         #expect(replacementClient.rateSongCalled == false)
+    }
+
+    @Test("likeCurrentTrack clears optimistic status when active account changes before completion")
+    func likeCurrentTrackClearsOptimisticStatusWhenActiveAccountChangesBeforeCompletion() async {
+        self.mockClient.rateSongDelay = .milliseconds(50)
+        var song = TestFixtures.makeSong(id: "account-switch-video")
+        song.likeStatus = .like
+        self.playerService.currentTrack = song
+        self.playerService.currentTrackLikeStatus = .indifferent
+
+        self.playerService.likeCurrentTrack()
+        #expect(self.playerService.currentTrackLikeStatus == .like)
+
+        SongLikeStatusManager.shared.setActiveAccountID("brand-account")
+        defer { SongLikeStatusManager.shared.setActiveAccountID(nil) }
+
+        let reverted = await self.waitUntilLikeStatus(.indifferent)
+        #expect(reverted)
     }
 
     @Test("likeCurrentTrack is ignored while signed out")

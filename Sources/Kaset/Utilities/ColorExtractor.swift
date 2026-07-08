@@ -210,16 +210,23 @@ actor ColorPaletteCache {
     static let shared = ColorPaletteCache()
 
     private let imageCache: ImageCache
+    private let maximumPaletteCount: Int
     private var palettes: [String: ColorExtractor.ColorPalette] = [:]
+    private var mostRecentlyUsedKeys: [String] = []
     private var inFlight: [String: Task<ColorExtractor.ColorPalette?, Never>] = [:]
 
-    init(imageCache: ImageCache = ImageCache.shared) {
+    init(
+        imageCache: ImageCache = ImageCache.shared,
+        maximumPaletteCount: Int = 200
+    ) {
         self.imageCache = imageCache
+        self.maximumPaletteCount = max(1, maximumPaletteCount)
     }
 
     func palette(for url: URL, targetSize: CGSize) async -> ColorExtractor.ColorPalette {
         let key = self.cacheKey(for: url, targetSize: targetSize)
         if let cached = self.palettes[key] {
+            self.markPaletteUsed(for: key)
             return cached
         }
         if let existing = self.inFlight[key] {
@@ -241,9 +248,35 @@ actor ColorPaletteCache {
         guard let palette else {
             return .default
         }
-        self.palettes[key] = palette
+        self.storePalette(palette, for: key)
         return palette
     }
+
+    private func storePalette(_ palette: ColorExtractor.ColorPalette, for key: String) {
+        self.palettes[key] = palette
+        self.markPaletteUsed(for: key)
+        self.evictLeastRecentlyUsedPalettesIfNeeded()
+    }
+
+    private func markPaletteUsed(for key: String) {
+        self.mostRecentlyUsedKeys.removeAll { $0 == key }
+        self.mostRecentlyUsedKeys.append(key)
+    }
+
+    private func evictLeastRecentlyUsedPalettesIfNeeded() {
+        while self.palettes.count > self.maximumPaletteCount,
+              let evictedKey = self.mostRecentlyUsedKeys.first
+        {
+            self.mostRecentlyUsedKeys.removeFirst()
+            self.palettes.removeValue(forKey: evictedKey)
+        }
+    }
+
+    #if DEBUG
+        var cachedPaletteCountForTesting: Int {
+            self.palettes.count
+        }
+    #endif
 
     private func cacheKey(for url: URL, targetSize: CGSize) -> String {
         "\(url.absoluteString)@\(Int(targetSize.width))x\(Int(targetSize.height))"

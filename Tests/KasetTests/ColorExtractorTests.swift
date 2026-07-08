@@ -63,6 +63,31 @@ struct ColorExtractorTests {
         #expect(requestCount == 2)
     }
 
+    @Test("Palette cache evicts least recently used entries at its count limit")
+    func paletteCacheEvictsLeastRecentlyUsedEntriesAtCountLimit() async throws {
+        let harness = try Self.makeHarness(path: "evict-a.png", maximumPaletteCount: 2)
+        defer { harness.cleanup() }
+        let responses = try [
+            #require(URL(string: "https://example.com/evict-a.png")): harness.data,
+            #require(URL(string: "https://example.com/evict-b.png")): Self.pngData(color: NSColor(calibratedRed: 0.10, green: 0.70, blue: 0.20, alpha: 1)),
+            #require(URL(string: "https://example.com/evict-c.png")): Self.pngData(color: NSColor(calibratedRed: 0.20, green: 0.30, blue: 0.80, alpha: 1)),
+        ]
+        MockURLProtocol.setRequestHandler(for: harness.session) { request in
+            let url = try #require(request.url)
+            return try Self.response(url: url, data: #require(responses[url]))
+        }
+
+        let secondURL = try #require(URL(string: "https://example.com/evict-b.png"))
+        let thirdURL = try #require(URL(string: "https://example.com/evict-c.png"))
+
+        _ = await harness.paletteCache.palette(for: harness.url, targetSize: CGSize(width: 32, height: 32))
+        _ = await harness.paletteCache.palette(for: secondURL, targetSize: CGSize(width: 32, height: 32))
+        _ = await harness.paletteCache.palette(for: harness.url, targetSize: CGSize(width: 32, height: 32))
+        _ = await harness.paletteCache.palette(for: thirdURL, targetSize: CGSize(width: 32, height: 32))
+
+        #expect(await harness.paletteCache.cachedPaletteCountForTesting == 2)
+    }
+
     private struct Harness {
         let data: Data
         let directPalette: ColorExtractor.ColorPalette
@@ -77,7 +102,7 @@ struct ColorExtractorTests {
         }
     }
 
-    private static func makeHarness(path: String) throws -> Harness {
+    private static func makeHarness(path: String, maximumPaletteCount: Int = 200) throws -> Harness {
         let data = try Self.pngData(color: NSColor(calibratedRed: 0.78, green: 0.20, blue: 0.12, alpha: 1))
         let image = try #require(NSImage(data: data))
         let directPalette = ColorExtractor.extractPalette(from: image)
@@ -95,7 +120,7 @@ struct ColorExtractorTests {
             directPalette: directPalette,
             url: url,
             session: session,
-            paletteCache: ColorPaletteCache(imageCache: imageCache),
+            paletteCache: ColorPaletteCache(imageCache: imageCache, maximumPaletteCount: maximumPaletteCount),
             directory: directory
         )
     }
