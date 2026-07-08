@@ -254,15 +254,18 @@ enum WatchNextParser {
 
     private static func milliseconds(fromTimeText text: String) -> Int? {
         let parts = text.split(separator: ":")
-        guard parts.count == 2 || parts.count == 3 else { return nil }
+        guard parts.count == 2 || parts.count == 3 else {
+            return nil
+        }
         let values = parts.compactMap { Int($0) }
-        guard values.count == parts.count else { return nil }
+        guard values.count == parts.count else {
+            return nil
+        }
 
-        let seconds: Int
-        if values.count == 3 {
-            seconds = values[0] * 3600 + values[1] * 60 + values[2]
+        let seconds: Int = if values.count == 3 {
+            values[0] * 3600 + values[1] * 60 + values[2]
         } else {
-            seconds = values[0] * 60 + values[1]
+            values[0] * 60 + values[1]
         }
         return seconds * 1000
     }
