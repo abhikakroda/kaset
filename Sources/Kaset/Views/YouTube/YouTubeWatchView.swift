@@ -226,13 +226,17 @@ struct YouTubeWatchView: View {
 
     /// Starts playback of this view's video, or adopts the surface if this
     /// video is already playing (e.g. docking back from the floating window).
-    private func startOrAdoptPlayback() {
+    private func startOrAdoptPlayback(startAt: Double? = nil) {
         if self.youtubePlayer.currentVideo?.videoId == self.video.videoId {
             if self.youtubePlayer.surfaceLocation == .floating {
                 self.youtubePlayer.dockInline()
             }
         } else {
-            self.youtubePlayer.play(video: self.video, usesCookieFreeDataStore: self.authService.shouldUseCookieFreePlaybackDataStore)
+            self.youtubePlayer.play(
+                video: self.video,
+                usesCookieFreeDataStore: self.authService.shouldUseCookieFreePlaybackDataStore,
+                startAt: startAt
+            )
         }
         self.youtubePlayer.setUpNext(self.viewModel.data.related)
         self.youtubePlayer.setChapters(self.viewModel.data.chapters)
@@ -361,7 +365,8 @@ struct YouTubeWatchView: View {
 
     private func seekToChapter(_ chapter: YouTubeChapter) {
         if self.youtubePlayer.currentVideo?.videoId != self.video.videoId {
-            self.startOrAdoptPlayback()
+            self.startOrAdoptPlayback(startAt: chapter.startTime)
+            return
         }
         self.youtubePlayer.seek(to: chapter.startTime)
     }

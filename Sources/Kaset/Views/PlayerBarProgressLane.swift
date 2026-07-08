@@ -19,7 +19,6 @@ struct PlayerBarProgressLane: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var isDragging = false
     @State private var isHovering = false
-    @State private var hoverFraction: Double?
     @State private var dragFraction: Double?
     @State private var previewChapterMarker: PlayerBarProgressMarker?
 
@@ -177,12 +176,10 @@ struct PlayerBarProgressLane: View {
                 case let .active(location):
                     let x = location.x - PlayerBarSliderVisuals.hitOutset
                     let fraction = Double(min(max(0, x / width), 1))
-                    self.hoverFraction = fraction
                     if self.dragFraction == nil {
                         self.updatePreviewMarker(self.nearestMarker(to: fraction, width: width))
                     }
                 case .ended:
-                    self.hoverFraction = nil
                     if self.dragFraction == nil {
                         self.updatePreviewMarker(nil)
                     }
@@ -192,7 +189,6 @@ struct PlayerBarProgressLane: View {
             .onHover { hovering in
                 self.isHovering = hovering
                 if !hovering {
-                    self.hoverFraction = nil
                     if self.dragFraction == nil {
                         self.updatePreviewMarker(nil)
                     }

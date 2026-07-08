@@ -251,7 +251,7 @@ final class YouTubePlayerService {
     // MARK: - Commands
 
     /// Starts playback of a video, docked inline.
-    func play(video: YouTubeVideo, usesCookieFreeDataStore: Bool = false) {
+    func play(video: YouTubeVideo, usesCookieFreeDataStore: Bool = false, startAt: Double? = nil) {
         self.logger.info("YouTubePlayer: play video")
         self.usesCookieFreePlaybackDataStore = usesCookieFreeDataStore
         self.playbackWillStart?()
@@ -275,7 +275,11 @@ final class YouTubePlayerService {
             playerService: self,
             usesCookieFreeDataStore: self.usesCookieFreePlaybackDataStore
         )
-        self.playbackController.loadVideo(videoId: video.videoId)
+        if let startAt, startAt > 0 {
+            self.playbackController.reloadVideo(videoId: video.videoId, resumeAt: startAt)
+        } else {
+            self.playbackController.loadVideo(videoId: video.videoId)
+        }
     }
 
     /// Re-points the current video under the WebView session's current
