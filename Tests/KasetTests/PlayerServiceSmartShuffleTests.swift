@@ -7,10 +7,14 @@ import Testing
 struct PlayerServiceSmartShuffleTests {
     var playerService: PlayerService
     var mockClient: MockYTMusicClient
+    let persistenceNamespace: String
 
     init() {
+        self.persistenceNamespace = "PlayerServiceSmartShuffleTests-\(UUID().uuidString)"
         self.mockClient = MockYTMusicClient()
         self.playerService = PlayerService()
+        self.playerService.useQueuePersistenceNamespaceForTesting(self.persistenceNamespace)
+        self.playerService.clearSavedQueue()
         self.playerService.setYTMusicClient(self.mockClient)
         self.playerService.confirmPlaybackStarted()
     }
@@ -231,6 +235,7 @@ struct PlayerServiceSmartShuffleTests {
         defer { self.playerService.clearSavedQueue() }
 
         let restored = PlayerService()
+        restored.useQueuePersistenceNamespaceForTesting(self.persistenceNamespace)
         #expect(restored.restoreQueueFromPersistence())
         #expect(restored.queue.map(\.videoId) == ["video-before", "rec-current", "video-after"])
         #expect(restored.queueEntries.map(\.source) == [.queued, .suggested, .queued])
@@ -255,6 +260,7 @@ struct PlayerServiceSmartShuffleTests {
         // suggestions. They are regenerated from live playback context, never persisted. (No client
         // is attached and we assert synchronously, so no top-up can run before the checks.)
         let restored = PlayerService()
+        restored.useQueuePersistenceNamespaceForTesting(self.persistenceNamespace)
         #expect(restored.restoreQueueFromPersistence())
         #expect(restored.queueEntries.allSatisfy { $0.source == .queued })
         #expect(Set(restored.queue.map(\.videoId)) == originalIds)

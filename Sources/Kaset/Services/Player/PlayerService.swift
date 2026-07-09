@@ -309,6 +309,9 @@ final class PlayerService: NSObject, PlayerServiceProtocol {
 
     @ObservationIgnored var queuePersistenceWriteCountForTesting = 0
 
+    /// Optional suffix for test-only queue persistence isolation. Production uses the empty suffix.
+    @ObservationIgnored var queuePersistenceKeySuffix = ""
+
     /// Task handle for the one-shot queue metadata enrichment pass, if one is scheduled or running.
     @ObservationIgnored var enrichmentTask: Task<Void, Never>?
 
