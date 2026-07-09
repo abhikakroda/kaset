@@ -9,10 +9,9 @@ struct ColorExtractorTests {
     func concurrentCachedPaletteRequestsCoalesceDownload() async throws {
         let harness = try Self.makeHarness(path: "coalesce.png")
         defer { harness.cleanup() }
-        nonisolated(unsafe) var requestCount = 0
+        let requestCount = LockedCounter()
         MockURLProtocol.setRequestHandler(for: harness.session) { request in
-            requestCount += 1
-            if requestCount == 1 {
+            if requestCount.increment() == 1 {
                 Thread.sleep(forTimeInterval: 0.05)
             }
             return try Self.response(url: #require(request.url), data: harness.data)
@@ -23,16 +22,16 @@ struct ColorExtractorTests {
         let palettes = await [first, second]
 
         #expect(palettes == [harness.directPalette, harness.directPalette])
-        #expect(requestCount == 1)
+        #expect(requestCount.count == 1)
     }
 
     @Test("Warm cached palette request does not hit the image loader again")
     func warmCachedPaletteRequestAvoidsImageReload() async throws {
         let harness = try Self.makeHarness(path: "warm.png")
         defer { harness.cleanup() }
-        nonisolated(unsafe) var requestCount = 0
+        let requestCount = LockedCounter()
         MockURLProtocol.setRequestHandler(for: harness.session) { request in
-            requestCount += 1
+            requestCount.increment()
             return try Self.response(url: #require(request.url), data: harness.data)
         }
 
@@ -41,17 +40,16 @@ struct ColorExtractorTests {
 
         #expect(first == harness.directPalette)
         #expect(second == first)
-        #expect(requestCount == 1)
+        #expect(requestCount.count == 1)
     }
 
     @Test("Failed palette image load retries instead of caching default")
     func failedPaletteImageLoadRetries() async throws {
         let harness = try Self.makeHarness(path: "retry.png")
         defer { harness.cleanup() }
-        nonisolated(unsafe) var requestCount = 0
+        let requestCount = LockedCounter()
         MockURLProtocol.setRequestHandler(for: harness.session) { request in
-            requestCount += 1
-            let statusCode = requestCount == 1 ? 500 : 200
+            let statusCode = requestCount.increment() == 1 ? 500 : 200
             return try Self.response(url: #require(request.url), data: harness.data, statusCode: statusCode)
         }
 
@@ -60,7 +58,7 @@ struct ColorExtractorTests {
 
         #expect(first == .default)
         #expect(second == harness.directPalette)
-        #expect(requestCount == 2)
+        #expect(requestCount.count == 2)
     }
 
     @Test("Palette cache evicts least recently used entries at its count limit")

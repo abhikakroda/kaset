@@ -12,10 +12,9 @@ struct ImageCacheNetworkCoalescingTests {
         let imageData = try Self.makePNGData()
         let url = try #require(URL(string: "https://example.com/artwork.png"))
         let session = MockURLProtocol.makeMockSession()
-        nonisolated(unsafe) var requestCount = 0
+        let requestCount = LockedCounter()
         MockURLProtocol.setRequestHandler(for: session) { request in
-            requestCount += 1
-            if requestCount == 1 {
+            if requestCount.increment() == 1 {
                 Thread.sleep(forTimeInterval: 0.1)
             }
             let response = HTTPURLResponse(
@@ -40,7 +39,7 @@ struct ImageCacheNetworkCoalescingTests {
         let images = await [small, large]
 
         #expect(images.allSatisfy { $0 != nil })
-        #expect(requestCount == 1)
+        #expect(requestCount.count == 1)
     }
 
     @Test("Failed raw download clears in-flight entry and retries later")
@@ -50,10 +49,9 @@ struct ImageCacheNetworkCoalescingTests {
         let imageData = try Self.makePNGData()
         let url = try #require(URL(string: "https://example.com/retry.png"))
         let session = MockURLProtocol.makeMockSession()
-        nonisolated(unsafe) var requestCount = 0
+        let requestCount = LockedCounter()
         MockURLProtocol.setRequestHandler(for: session) { request in
-            requestCount += 1
-            let statusCode = requestCount == 1 ? 500 : 200
+            let statusCode = requestCount.increment() == 1 ? 500 : 200
             let response = HTTPURLResponse(
                 url: request.url!,
                 statusCode: statusCode,
@@ -76,7 +74,7 @@ struct ImageCacheNetworkCoalescingTests {
 
         #expect(first == nil)
         #expect(second != nil)
-        #expect(requestCount == 2)
+        #expect(requestCount.count == 2)
     }
 
     @Test("Warm disk data decodes multiple target sizes without network")
@@ -86,9 +84,9 @@ struct ImageCacheNetworkCoalescingTests {
         let imageData = try Self.makePNGData()
         let url = try #require(URL(string: "https://example.com/warm.png"))
         let session = MockURLProtocol.makeMockSession()
-        nonisolated(unsafe) var requestCount = 0
+        let requestCount = LockedCounter()
         MockURLProtocol.setRequestHandler(for: session) { request in
-            requestCount += 1
+            requestCount.increment()
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (response, imageData)
         }
@@ -107,7 +105,7 @@ struct ImageCacheNetworkCoalescingTests {
 
         #expect(small != nil)
         #expect(large != nil)
-        #expect(requestCount == 0)
+        #expect(requestCount.isEmpty)
     }
 
     private static func makeTemporaryDirectory() throws -> URL {

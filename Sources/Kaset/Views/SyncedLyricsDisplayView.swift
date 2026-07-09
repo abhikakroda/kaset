@@ -20,8 +20,9 @@ struct SyncedLyricsDisplayView: View {
                 LazyVStack(alignment: .center, spacing: 20) {
                     Spacer().frame(height: 150) // Top padding
 
-                    ForEach(self.lyrics.lines) { line in
-                        let status = self.currentStatus(for: line)
+                    ForEach(self.lyrics.lines.indices, id: \.self) { lineIndex in
+                        let line = self.lyrics.lines[lineIndex]
+                        let status = self.currentStatus(for: line, at: lineIndex)
                         SyncedLineView(
                             line: line,
                             status: status,
@@ -52,11 +53,7 @@ struct SyncedLyricsDisplayView: View {
         }
     }
 
-    private func currentStatus(for line: SyncedLyricLine) -> SyncedLyrics.LineStatus {
-        guard let lineIndex = self.lyrics.lines.firstIndex(where: { $0.id == line.id }) else {
-            return .upcoming
-        }
-
+    private func currentStatus(for line: SyncedLyricLine, at lineIndex: Int) -> SyncedLyrics.LineStatus {
         if let currentLineIndex, self.lyrics.lines.indices.contains(currentLineIndex) {
             if lineIndex < currentLineIndex {
                 return .previous
