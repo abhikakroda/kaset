@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import Kaset
 
-@available(macOS 26.0, *)
+
 
 @Suite(.serialized, .timeLimit(.minutes(1)))
 @MainActor

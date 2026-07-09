@@ -12,7 +12,10 @@
 	<true/>
 	<key>com.apple.security.files.bookmarks.app-scope</key>
 	<true/>
-	<!-- Required for Core Audio process tap (Equalizer feature). -->
+	<!-- Default download destination for yt-dlp media. -->
+	<key>com.apple.security.files.downloads.read-write</key>
+	<true/>
+	<!-- Required for Core Audio process tap (equalizer feature). -->
 	<key>com.apple.security.device.audio-input</key>
 	<true/>
 
@@ -21,6 +24,16 @@
 	<array>
 		<string>com.sertacozercan.Kaset-spks</string>
 		<string>com.sertacozercan.Kaset-spki</string>
+	</array>
+
+	<!-- Allow reading Homebrew / system yt-dlp + ffmpeg for the download service. -->
+	<!-- Also allows ~/.local/bin/ for Antigravity CLI (agy). -->
+	<key>com.apple.security.temporary-exception.files.absolute-path.read-only</key>
+	<array>
+		<string>/opt/homebrew/</string>
+		<string>/usr/local/</string>
+		<string>/opt/local/</string>
+		<string>/Users/</string>
 	</array>
 </dict>
 </plist>

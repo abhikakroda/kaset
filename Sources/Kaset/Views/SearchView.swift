@@ -10,8 +10,10 @@ struct SearchView: View {
     @Environment(SongLikeStatusManager.self) private var likeStatusManager
     @Environment(AuthService.self) private var authService
     @Environment(LibraryViewModel.self) private var libraryViewModel: LibraryViewModel?
+    @Environment(\.usesLegacyMacOS15UI) private var usesLegacyMacOS15UI
     @State private var navigationPath = NavigationPath()
     @State private var networkMonitor = NetworkMonitor.shared
+    @Namespace private var searchGlassNamespace
 
     /// External trigger for focusing the search field (from keyboard shortcut).
     @Binding var focusTrigger: Bool
@@ -73,18 +75,18 @@ struct SearchView: View {
 
     private var searchBar: some View {
         VStack(spacing: 12) {
-            // Keep suggestions as an overlay of the field itself. If the dropdown participates
-            // in the search bar's layout, macOS 26 glass materialization can render a
-            // second transient plate during updates. Anchoring it as an overlay gives the
-            // autocomplete menu a single visual owner and prevents duplicate dropdowns.
-            self.searchField
-                .overlay(alignment: .top) {
-                    if self.viewModel.showSuggestions {
-                        self.suggestionsDropdown
-                            .padding(.top, 44) // Below search field
+            // The search field and suggestions are wrapped in a glass container
+            // so on macOS 26+ the dropdown materializes from the search field.
+            CompatGlassContainer(spacing: 4) {
+                self.searchField
+                    .overlay(alignment: .top) {
+                        if self.viewModel.showSuggestions {
+                            self.suggestionsDropdown
+                                .padding(.top, 44) // Below search field
+                        }
                     }
-                }
-                .zIndex(1)
+                    .zIndex(1)
+            }
 
             // Filter chips
             if self.viewModel.shouldShowFilters {
@@ -160,6 +162,7 @@ struct SearchView: View {
         }
         .padding(10)
         .compatGlass(in: .capsule)
+        .compatGlassID("searchField", in: self.searchGlassNamespace)
     }
 
     private var suggestionsDropdown: some View {
@@ -172,13 +175,17 @@ struct SearchView: View {
                 }
             }
         }
-        .compatGlass(in: .rect(cornerRadius: 8))
-        .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 4)
+        .compatGlass(in: .rect(cornerRadius: 12))
+        .compatGlassID("searchSuggestions", in: self.searchGlassNamespace)
+        .compatGlassTransition(.materialize)
+        .shadow(color: .black.opacity(0.12), radius: 12, x: 0, y: 6)
         .accessibilityIdentifier(AccessibilityID.Search.suggestionsContainer)
     }
 
     private func suggestionRow(_ suggestion: SearchSuggestion, index: Int) -> some View {
-        Button {
+        let isHighlighted = index == self.selectedSuggestionIndex
+
+        return Button {
             self.viewModel.selectSuggestion(suggestion)
         } label: {
             HStack(spacing: 12) {
@@ -198,7 +205,12 @@ struct SearchView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .background(index == self.selectedSuggestionIndex ? Color.accentColor.opacity(0.15) : Color.clear)
+            .background(
+                isHighlighted
+                    ? Color.accentColor.opacity(0.12)
+                    : Color.clear,
+                in: .rect(cornerRadius: 6)
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -216,8 +228,10 @@ struct SearchView: View {
     }
 
     private func filterChip(_ filter: SearchViewModel.SearchFilter) -> some View {
-        Button {
-            withAnimation(AppAnimation.spring) {
+        let isSelected = self.viewModel.selectedFilter == filter
+
+        return Button {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
                 self.viewModel.selectedFilter = filter
             }
         } label: {
@@ -225,11 +239,20 @@ struct SearchView: View {
                 .font(.system(size: 12, weight: .medium))
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                .background(self.viewModel.selectedFilter == filter ? Color.accentColor : Color.secondary.opacity(0.2))
-                .foregroundStyle(self.viewModel.selectedFilter == filter ? .white : .primary)
+                .foregroundStyle(isSelected ? .white : .primary)
+                .background {
+                    if isSelected {
+                        Capsule()
+                            .fill(Color.accentColor)
+                            .compatGlassID("filterChip", in: self.searchGlassNamespace)
+                    } else {
+                        Capsule()
+                            .fill(Color.secondary.opacity(0.15))
+                    }
+                }
                 .clipShape(.capsule)
         }
-        .buttonStyle(.chip(isSelected: self.viewModel.selectedFilter == filter))
+        .buttonStyle(.chip(isSelected: isSelected))
     }
 
     // MARK: - Content

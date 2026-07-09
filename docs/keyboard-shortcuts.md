@@ -14,6 +14,9 @@ Kaset provides keyboard control for playback and navigation while preserving sta
 | `⌘S`     | Toggle shuffle (off/on; the player-bar control also cycles to Smart Shuffle) |
 | `⌘R`     | Cycle repeat mode (Off → All → One) |
 | `⇧⌘M`    | Switch to Mini Player               |
+| `F`      | Full Screen (YouTube video)         |
+| `⌘D`     | Download current YouTube video (yt-dlp, background) |
+| `Esc`    | Exit Full Screen (while video window is key) |
 
 Mute is still available from the Playback menu and AppleScript, but Kaset intentionally does not assign a default mute shortcut so the native macOS minimize shortcut (`⌘M`) continues to work.
 

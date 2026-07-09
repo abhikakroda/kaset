@@ -38,6 +38,8 @@ struct YouTubeSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            YouTubeDownloadSettingsSection(settings: self.settings)
         }
         .formStyle(.grouped)
     }

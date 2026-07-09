@@ -34,7 +34,27 @@ struct YouTubePlayerBar: View {
     @State private var isAdjustingVolume = false
     @State private var showsVolumeOverlay = false
 
+    /// Hide the bar entirely when nothing is loaded (e.g. YouTube Home with
+    /// no active video). An empty “Not Playing” capsule was confusing and
+    /// stole bottom space for no reason.
+    private var shouldShowBar: Bool {
+        self.youtubePlayer.currentVideo != nil
+    }
+
     var body: some View {
+        Group {
+            if self.shouldShowBar {
+                self.barContent
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(
+            .spring(response: 0.35, dampingFraction: 0.86),
+            value: self.youtubePlayer.currentVideo?.videoId
+        )
+    }
+
+    private var barContent: some View {
         CompatGlassContainer(spacing: 0) {
             GeometryReader { proxy in
                 let usesCompactDetails = proxy.size.width <= PlayerBarLayout.compactDetailsBreakpoint
@@ -396,6 +416,7 @@ struct YouTubePlayerBar: View {
             )
             .disabled(self.youtubePlayer.currentVideo == nil)
 
+            self.compactSpeedMenu
             self.compactCaptionsMenu
             self.compactQualityMenu
 
@@ -480,6 +501,39 @@ struct YouTubePlayerBar: View {
         .disabled(self.youtubePlayer.qualityLevels.isEmpty)
     }
 
+    private static let playbackSpeeds: [Double] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
+
+    private static func speedLabel(_ speed: Double) -> String {
+        speed == 1.0 ? String(localized: "Normal") : String(format: "%.2g×", speed)
+    }
+
+    private var compactSpeedMenu: some View {
+        let isNonDefault = self.youtubePlayer.playbackSpeed != 1.0
+        return PlayerBarIconMenu(
+            isSelected: isNonDefault,
+            accessibilityID: AccessibilityID.YouTubeContent.watchSpeedButton,
+            accessibilityLabel: String(localized: "Playback speed")
+        ) {
+            ForEach(Self.playbackSpeeds, id: \.self) { speed in
+                Button {
+                    self.youtubePlayer.selectPlaybackSpeed(speed)
+                } label: {
+                    if self.youtubePlayer.playbackSpeed == speed {
+                        Label(Self.speedLabel(speed), systemImage: "checkmark")
+                    } else {
+                        Text(Self.speedLabel(speed))
+                    }
+                }
+            }
+        } icon: {
+            Image(systemName: "gauge.with.dots.needle.67percent")
+                .font(.system(size: 15, weight: .regular))
+                .frame(width: 16, height: 16)
+                .foregroundStyle(isNonDefault ? Self.brandAccent : .primary)
+        }
+        .disabled(self.youtubePlayer.currentVideo == nil)
+    }
+
     private var youtubeVolumeOverlay: some View {
         CompatGlassContainer(spacing: 0) {
             VStack(spacing: 10) {
@@ -534,7 +588,7 @@ struct YouTubePlayerBar: View {
     }
 
     private var youtubeOptionsWidth: CGFloat {
-        210
+        236
     }
 
     /// Fraction (0...1) to render: the live drag value while seeking, otherwise actual progress.
@@ -693,4 +747,5 @@ extension AccessibilityID.YouTubeContent {
     static let watchFullView = "youtubeContent.watchFullView"
     static let captionsButton = "youtubeContent.captionsButton"
     static let qualityButton = "youtubeContent.qualityButton"
+    static let watchSpeedButton = "youtubeContent.watchSpeedButton"
 }

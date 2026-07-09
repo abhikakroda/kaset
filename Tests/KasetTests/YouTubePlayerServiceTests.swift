@@ -63,6 +63,7 @@ private final class MockYouTubeWatchPlaybackController: YouTubeWatchPlaybackCont
     var quality: [String] = []
     private(set) var selectedCaption: String??
     private(set) var selectedQuality: String?
+    private(set) var selectedSpeeds: [Double] = []
 
     func availableCaptionTracks() async -> [YouTubeCaptionTrack] {
         self.captionTracks
@@ -88,6 +89,10 @@ private final class MockYouTubeWatchPlaybackController: YouTubeWatchPlaybackCont
 
     func setQualityLevel(_ level: String) {
         self.selectedQuality = level
+    }
+
+    func setPlaybackSpeed(_ speed: Double) {
+        self.selectedSpeeds.append(speed)
     }
 
     func storyboardSpec(expectedVideoId _: String?) async -> String? {
@@ -375,8 +380,8 @@ struct YouTubePlayerServiceTests {
         #expect(self.sut.currentVideo?.title == "Drifted Title")
     }
 
-    @Test("Inline disappearance while playing pops out to the floating window")
-    func disappearWhilePlayingPopsOut() {
+    @Test("Inline disappearance while playing collapses to the in-app mini player")
+    func disappearWhilePlayingCollapsesToMiniPlayer() {
         self.sut.play(video: MockYouTubeClient.makeVideo(videoId: "abc"))
         self.sut.activeInlineVideoId = "abc"
         self.sut.updatePlaybackState(.init(
@@ -386,7 +391,7 @@ struct YouTubePlayerServiceTests {
 
         self.sut.inlineSurfaceWillDisappear(videoId: "abc")
 
-        #expect(self.sut.surfaceLocation == .floating)
+        #expect(self.sut.surfaceLocation == .miniPlayer)
         #expect(self.sut.currentVideo != nil)
     }
 
@@ -414,7 +419,7 @@ struct YouTubePlayerServiceTests {
         #expect(self.sut.activeInlineVideoId == "abc")
     }
 
-    @Test("Pop-out disabled: inline disappearance while playing stops instead of floating")
+    @Test("Pop-out disabled: inline disappearance while playing stops instead of mini player")
     func disappearWhilePlayingStopsWhenPopOutDisabled() {
         let controller = MockYouTubeWatchPlaybackController()
         let sut = YouTubePlayerService(
@@ -478,7 +483,7 @@ struct YouTubePlayerServiceTests {
         sut.inlineSurfaceWillDisappear(videoId: "abc")
         #expect(sut.surfaceLocation == .none)
 
-        // Flip the gate on; a fresh playback now pops out.
+        // Flip the gate on; a fresh playback now collapses to mini player.
         popOutEnabled.value = true
         sut.play(video: MockYouTubeClient.makeVideo(videoId: "abc"))
         sut.activeInlineVideoId = "abc"
@@ -487,7 +492,7 @@ struct YouTubePlayerServiceTests {
             videoId: "abc", title: nil, isAd: false
         ))
         sut.inlineSurfaceWillDisappear(videoId: "abc")
-        #expect(sut.surfaceLocation == .floating)
+        #expect(sut.surfaceLocation == .miniPlayer)
     }
 
     @Test("Video ended invokes the hook and clears isPlaying")
@@ -848,9 +853,13 @@ struct YouTubePlayerServiceTests {
         self.sut.selectQuality("hd720")
         #expect(self.sut.currentQuality == "hd720")
         #expect(self.controller.selectedQuality == "hd720")
+
+        self.sut.selectPlaybackSpeed(1.5)
+        #expect(self.sut.playbackSpeed == 1.5)
+        #expect(self.controller.selectedSpeeds == [1.5])
     }
 
-    @Test("Source switch pauses the docked video in place — no pop-out")
+    @Test("Source switch pauses the docked video in place — no mini player")
     func sourceSwitchPausesInPlace() {
         self.sut.play(video: MockYouTubeClient.makeVideo(videoId: "abc"))
         self.sut.activeInlineVideoId = "abc"
@@ -868,14 +877,31 @@ struct YouTubePlayerServiceTests {
         #expect(self.controller.tearDownCount == 0)
 
         // The suppression is one-shot: a later in-app navigation while
-        // playing pops out as usual.
+        // playing collapses to the in-app mini player as usual.
         self.sut.activeInlineVideoId = "abc"
         self.sut.updatePlaybackState(.init(
             isPlaying: true, progress: 6, duration: 60,
             videoId: "abc", title: nil, isAd: false
         ))
         self.sut.inlineSurfaceWillDisappear(videoId: "abc")
-        #expect(self.sut.surfaceLocation == .floating)
+        #expect(self.sut.surfaceLocation == .miniPlayer)
+    }
+
+    @Test("Expand from mini player requests pop-in; dock returns to inline")
+    func miniPlayerExpandAndDock() {
+        self.sut.play(video: MockYouTubeClient.makeVideo(videoId: "abc"))
+        self.sut.updatePlaybackState(.init(
+            isPlaying: true, progress: 5, duration: 60,
+            videoId: "abc", title: nil, isAd: false
+        ))
+        self.sut.popToMiniPlayer()
+        #expect(self.sut.surfaceLocation == .miniPlayer)
+
+        self.sut.expandFromMiniPlayer()
+        #expect(self.sut.popInRequest?.videoId == "abc")
+
+        self.sut.dockInline()
+        #expect(self.sut.surfaceLocation == .inline)
     }
 
     @Test("Pop-in request only fires from the floating window")

@@ -32,6 +32,11 @@ final class SettingsManager {
         static let ambientBackdropEnabled = "settings.ambientBackdropEnabled"
         static let ambientBackdropStyle = "settings.ambientBackdropStyle"
         static let popOutVideoOnNavigateAway = "settings.popOutVideoOnNavigateAway"
+        static let downloadFolderPreference = "settings.downloadFolderPreference"
+        static let downloadFolderBookmarkData = "settings.downloadFolderBookmarkData"
+        static let downloadFolderDisplayPath = "settings.downloadFolderDisplayPath"
+        static let downloadDefaultQuality = "settings.downloadDefaultQuality"
+        static let ytdlpBinaryPath = "settings.ytdlpBinaryPath"
         #if DEBUG
             static let useLegacyMacOS15UI = "settings.debug.useLegacyMacOS15UI"
         #endif
@@ -399,6 +404,45 @@ final class SettingsManager {
         }
     }
 
+    /// Where yt-dlp should write completed media (Downloads or custom folder).
+    var downloadFolderPreference: DownloadFolderPreference {
+        didSet {
+            UserDefaults.standard.set(self.downloadFolderPreference.rawValue, forKey: Keys.downloadFolderPreference)
+        }
+    }
+
+    /// Security-scoped bookmark for a custom download folder.
+    var downloadFolderBookmarkData: Data? {
+        didSet {
+            if let data = self.downloadFolderBookmarkData {
+                UserDefaults.standard.set(data, forKey: Keys.downloadFolderBookmarkData)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Keys.downloadFolderBookmarkData)
+            }
+        }
+    }
+
+    /// Human-readable path shown in Settings for the custom folder.
+    var downloadFolderDisplayPath: String {
+        didSet {
+            UserDefaults.standard.set(self.downloadFolderDisplayPath, forKey: Keys.downloadFolderDisplayPath)
+        }
+    }
+
+    /// Default quality preset for new downloads.
+    var downloadDefaultQuality: DownloadQuality {
+        didSet {
+            UserDefaults.standard.set(self.downloadDefaultQuality.rawValue, forKey: Keys.downloadDefaultQuality)
+        }
+    }
+
+    /// Optional absolute path override for the yt-dlp binary.
+    var ytdlpBinaryPath: String {
+        didSet {
+            UserDefaults.standard.set(self.ytdlpBinaryPath, forKey: Keys.ytdlpBinaryPath)
+        }
+    }
+
     #if DEBUG
         /// Debug-only switch that forces the app to render macOS 15 fallback UI on newer OS versions.
         var useLegacyMacOS15UI: Bool {
@@ -500,6 +544,26 @@ final class SettingsManager {
             self.appSource = source
         } else {
             self.appSource = .music
+        }
+
+        if let rawValue = UserDefaults.standard.string(forKey: Keys.downloadFolderPreference),
+           let preference = DownloadFolderPreference(rawValue: rawValue)
+        {
+            self.downloadFolderPreference = preference
+        } else {
+            self.downloadFolderPreference = .downloads
+        }
+
+        self.downloadFolderBookmarkData = UserDefaults.standard.data(forKey: Keys.downloadFolderBookmarkData)
+        self.downloadFolderDisplayPath = UserDefaults.standard.string(forKey: Keys.downloadFolderDisplayPath) ?? ""
+        self.ytdlpBinaryPath = UserDefaults.standard.string(forKey: Keys.ytdlpBinaryPath) ?? ""
+
+        if let rawValue = UserDefaults.standard.string(forKey: Keys.downloadDefaultQuality),
+           let quality = DownloadQuality(rawValue: rawValue)
+        {
+            self.downloadDefaultQuality = quality
+        } else {
+            self.downloadDefaultQuality = .best
         }
 
         AppLocalization.setLanguage(self.contentLanguage.languageCode)

@@ -5,7 +5,7 @@ import Testing
 // MARK: - MusicIntentTests
 
 /// Tests for MusicIntent query building and parsing logic.
-@available(macOS 26.0, *)
+
 
 @Suite(.tags(.api))
 struct MusicIntentTests {
@@ -416,7 +416,7 @@ struct MusicIntentTests {
 
 // MARK: - MusicActionTests
 
-@available(macOS 26.0, *)
+
 
 @Suite(.tags(.api))
 struct MusicActionTests {
@@ -435,7 +435,7 @@ struct MusicActionTests {
 
 // MARK: - ContentSourceTests
 
-@available(macOS 26.0, *)
+
 
 @Suite(.tags(.api))
 struct ContentSourceTests {

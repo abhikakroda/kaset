@@ -119,6 +119,20 @@ struct KasetApp: App {
         // YouTube video playback service + the one-audio-source arbiter
         let youtubePlayer = YouTubePlayerService(webKitManager: webkit)
         youtubePlayer.youtubeClient = youtubeClient
+        // Course mode: when a playlist lesson ends, mark it complete and
+        // auto-advance to the next topic when one remains.
+        youtubePlayer.onVideoEnded = { endedId in
+            Task { @MainActor in
+                let course = YouTubeCourseSession.shared
+                guard course.isActive else { return }
+                course.markCompleted(videoId: endedId)
+                if let next = course.nextLesson {
+                    course.syncCurrent(to: next)
+                    youtubePlayer.continueWith(video: next)
+                    youtubePlayer.setCourseQueue(course.remainingLessons)
+                }
+            }
+        }
         let arbiter = PlaybackArbiter(playerService: player, youtubePlayerService: youtubePlayer)
 
         _authService = State(initialValue: auth)
@@ -370,6 +384,52 @@ struct KasetApp: App {
                     self.playerService.cycleRepeatMode()
                 }
                 .keyboardShortcut("r", modifiers: .command)
+
+                Divider()
+
+                // Full Screen (YouTube) - F
+                Button(self.youtubePlayerService.isWindowFullscreen ? "Exit Full Screen" : "Full Screen") {
+                    if self.youtubePlayerService.currentVideo != nil {
+                        if self.youtubePlayerService.surfaceLocation == .inline {
+                            self.youtubePlayerService.popOutToWindow()
+                            Task { @MainActor in
+                                try? await Task.sleep(for: .milliseconds(250))
+                                YouTubeVideoWindowController.shared.toggleFullscreen(returnInlineOnExit: true)
+                            }
+                        } else if self.youtubePlayerService.surfaceLocation == .floating
+                            || self.youtubePlayerService.surfaceLocation == .miniPlayer
+                        {
+                            if self.youtubePlayerService.surfaceLocation == .miniPlayer {
+                                self.youtubePlayerService.popOutToWindow()
+                                Task { @MainActor in
+                                    try? await Task.sleep(for: .milliseconds(200))
+                                    YouTubeVideoWindowController.shared.toggleFullscreen()
+                                }
+                            } else {
+                                YouTubeVideoWindowController.shared.toggleFullscreen()
+                            }
+                        }
+                    }
+                }
+                .keyboardShortcut("f", modifiers: [])
+                .disabled(self.youtubePlayerService.currentVideo == nil)
+
+                // Download current YouTube video - ⌘D
+                Button("Download Video") {
+                    guard let video = self.youtubePlayerService.currentVideo else { return }
+                    do {
+                        _ = try YTDLPService.shared.download(
+                            videoId: video.videoId,
+                            title: video.title
+                        )
+                    } catch {
+                        DiagnosticsLogger.download.error(
+                            "Shortcut download failed: \(error.localizedDescription, privacy: .public)"
+                        )
+                    }
+                }
+                .keyboardShortcut("d", modifiers: .command)
+                .disabled(self.youtubePlayerService.currentVideo == nil)
 
                 Divider()
 

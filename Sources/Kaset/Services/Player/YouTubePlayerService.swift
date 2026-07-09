@@ -24,6 +24,7 @@ protocol YouTubeWatchPlaybackControlling: AnyObject {
     func availableQualityLevels() async -> [String]
     func currentQualityLevel() async -> String?
     func setQualityLevel(_ level: String)
+    func setPlaybackSpeed(_ speed: Double)
     func storyboardSpec(expectedVideoId: String?) async -> String?
     func tearDown()
 }
@@ -145,6 +146,8 @@ final class YouTubePlayerService {
         case none
         case inline
         case floating
+        /// In-app mini player strip at the bottom of the content column.
+        case miniPlayer
     }
 
     /// Current surface placement. KasetApp observes this to open/close the
@@ -190,6 +193,9 @@ final class YouTubePlayerService {
 
     /// The player's current quality level.
     private(set) var currentQuality: String?
+
+    /// The current playback speed (default 1.0 = normal).
+    private(set) var playbackSpeed: Double = 1.0
 
     /// YouTube storyboard spec for the current video (drives the ambient
     /// backdrop's fine-grained live color). `nil` until fetched / unavailable.
@@ -441,6 +447,22 @@ final class YouTubePlayerService {
         self.surfaceLocation = .inline
     }
 
+    /// Collapses the video into the in-app mini player strip at the bottom
+    /// of the content column. Video audio continues playing while collapsed.
+    func popToMiniPlayer() {
+        guard self.currentVideo != nil else { return }
+        self.logger.info("YouTubePlayer: collapse to in-app mini player")
+        self.surfaceLocation = .miniPlayer
+    }
+
+    /// Expands the in-app mini player back into the full watch view.
+    /// Triggers a pop-in request so YouTubeContentView opens the watch route.
+    func expandFromMiniPlayer() {
+        guard self.surfaceLocation == .miniPlayer, let video = self.currentVideo else { return }
+        self.logger.info("YouTubePlayer: expand from in-app mini player")
+        self.popInRequest = video
+    }
+
     /// The floating window asked to dock the video back into the app.
     func requestPopIn() {
         guard self.surfaceLocation == .floating, let video = self.currentVideo else { return }
@@ -454,8 +476,14 @@ final class YouTubePlayerService {
 
     // MARK: - Skipping
 
-    /// Supplies up-next candidates (the watch page's related list).
+    /// Supplies up-next candidates (the watch page's related list or a course queue).
     func setUpNext(_ videos: [YouTubeVideo]) {
+        let currentId = self.currentVideo?.videoId
+        self.upNext = videos.filter { $0.videoId != currentId && !$0.isShort }
+    }
+
+    /// Replaces up-next with an ordered course remainder (preserves order).
+    func setCourseQueue(_ videos: [YouTubeVideo]) {
         let currentId = self.currentVideo?.videoId
         self.upNext = videos.filter { $0.videoId != currentId && !$0.isShort }
     }
@@ -487,6 +515,12 @@ final class YouTubePlayerService {
     /// Marks the skip navigation request as handled.
     func consumeSkipNavigationRequest() {
         self.skipNavigationRequest = nil
+    }
+
+    /// Continues a multi-video queue (course playlist) without resetting
+    /// surface placement — used for next-lesson / auto-advance.
+    func continueWith(video: YouTubeVideo) {
+        self.advance(to: video)
     }
 
     private func advance(to video: YouTubeVideo, recordingHistory: Bool = true) {
@@ -537,6 +571,7 @@ final class YouTubePlayerService {
         self.activeCaptionLanguageCode = nil
         self.qualityLevels = []
         self.currentQuality = nil
+        self.playbackSpeed = 1.0
         self.storyboardSpec = nil
         self.storyboardFetchVideoId = nil
         self.storyboardFetchInFlightVideoId = nil
@@ -654,6 +689,13 @@ final class YouTubePlayerService {
         HapticService.toggle()
     }
 
+    /// Selects a playback speed (e.g. 0.5, 1.0, 1.5, 2.0).
+    func selectPlaybackSpeed(_ speed: Double) {
+        self.playbackSpeed = speed
+        self.playbackController.setPlaybackSpeed(speed)
+        HapticService.toggle()
+    }
+
     // MARK: - AirPlay
 
     /// Shows the system AirPlay picker for the video element.
@@ -702,8 +744,8 @@ final class YouTubePlayerService {
     }
 
     /// A WatchView for `videoId` is disappearing. If it owns the inline
-    /// surface, hand off: keep playing in the floating window, stop if
-    /// paused — or, during a source switch, stay paused in place.
+    /// surface, hand off: collapse to the in-app mini player while playing,
+    /// stop if paused — or, during a source switch, stay paused in place.
     func inlineSurfaceWillDisappear(videoId: String) {
         guard self.activeInlineVideoId == videoId else { return }
         self.activeInlineVideoId = nil
@@ -721,7 +763,9 @@ final class YouTubePlayerService {
         }
 
         if self.isPlaying, self.shouldPopOutOnNavigateAway() {
-            self.popOutToWindow()
+            // Collapse to the in-app mini player strip rather than launching a
+            // separate OS window — matches YouTube's back-swipe behaviour.
+            self.popToMiniPlayer()
         } else {
             // Playing with pop-out disabled, or paused: stop instead of
             // leaving a detached surface.
@@ -739,6 +783,7 @@ final class YouTubePlayerService {
         var videoId: String?
         var title: String?
         var isAd = false
+        var playbackRate: Double = 1.0
     }
 
     /// Applies a `STATE_UPDATE` from the watch page observer script.
@@ -775,6 +820,9 @@ final class YouTubePlayerService {
         self.progress = update.progress
         self.duration = update.duration
         self.isShowingAd = update.isAd
+        if update.playbackRate > 0, update.playbackRate != self.playbackSpeed {
+            self.playbackSpeed = update.playbackRate
+        }
         self.isPlaybackLoading = false
 
         // Remember the last real content position (ignoring ad playback) so an

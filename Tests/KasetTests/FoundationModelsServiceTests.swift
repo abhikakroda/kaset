@@ -5,7 +5,7 @@ import Testing
 // MARK: - FoundationModelsServiceTests
 
 /// Tests for FoundationModelsService availability and session creation.
-@available(macOS 26.0, *)
+
 
 @Suite(.tags(.api), .serialized)
 @MainActor

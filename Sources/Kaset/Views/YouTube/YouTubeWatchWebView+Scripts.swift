@@ -62,7 +62,8 @@ extension YouTubeWatchWebView {
                         duration: (video.duration && isFinite(video.duration)) ? video.duration : 0,
                         videoId: videoId,
                         title: currentTitle(),
-                        isAd: isAdShowing()
+                        isAd: isAdShowing(),
+                        playbackRate: video.playbackRate || 1
                     });
                 } catch (e) {
                     console.log('[KasetYT] update error: ' + e);
@@ -656,6 +657,24 @@ extension YouTubeWatchWebView {
                     try { player.unMute(); } catch (e) {}
                 }
                 setTimeout(function() { window.__kasetIsSettingVolume = false; }, 100);
+            })();
+            """,
+            completionHandler: nil
+        )
+    }
+
+    /// Sets the playback speed on the video element and YouTube player API.
+    func setPlaybackSpeed(_ speed: Double) {
+        guard speed > 0, speed.isFinite else { return }
+        self.webView?.evaluateJavaScript(
+            """
+            (function() {
+                const video = document.querySelector('#movie_player video') || document.querySelector('video');
+                if (video) { video.playbackRate = \(speed); }
+                const player = document.getElementById('movie_player');
+                if (player && typeof player.setPlaybackRate === 'function') {
+                    try { player.setPlaybackRate(\(speed)); } catch (e) {}
+                }
             })();
             """,
             completionHandler: nil

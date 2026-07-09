@@ -34,6 +34,16 @@ struct YouTubeContentView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Background download HUD (real-time % / progress) — survives navigation.
+        .overlay(alignment: .topTrailing) {
+            YouTubeDownloadHUD()
+        }
+        // In-app mini player: slides up from the bottom when a video collapses
+        // via the back gesture, sitting above the YouTubePlayerBar capsule.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            YouTubeInAppMiniPlayer()
+                .animation(.spring(response: 0.38, dampingFraction: 0.85), value: self.youtubePlayer.surfaceLocation)
+        }
         .environment(self.store)
         // Reconcile on (re)mount: switching to the Music source unmounts this
         // view, so the observers below can't see a floating video that finishes
@@ -101,8 +111,9 @@ struct YouTubeContentView: View {
         self.store.navigationPath.append(YouTubeRoute.watch(video))
     }
 
-    /// Docks a popped-out video back into a watch view: adopts the one that
-    /// is already open for this video, or pushes a fresh watch route.
+    /// Expands a mini-player or floating-window video back into a watch view:
+    /// adopts the one that is already open for this video, or pushes a fresh
+    /// watch route.
     private func handlePopInRequest(_ request: YouTubeVideo?) {
         guard let video = request else { return }
         defer {
@@ -153,6 +164,8 @@ struct YouTubeContentView: View {
             YouTubePlaylistDetailView(playlistId: "WL", client: self.store.client)
         case .playlists:
             YouTubePlaylistsView(viewModel: self.store.playlists)
+        case .courses:
+            YouTubeCoursesView()
         case .history:
             YouTubeHistoryView(viewModel: self.store.history)
         }
@@ -174,6 +187,7 @@ enum YouTubeNavigationItem: String, Hashable, CaseIterable, Identifiable {
     case likedVideos = "Liked Videos"
     case watchLater = "Watch Later"
     case playlists = "Playlists"
+    case courses = "Courses"
     case history = "History"
 
     var id: String {
@@ -198,6 +212,8 @@ enum YouTubeNavigationItem: String, Hashable, CaseIterable, Identifiable {
             String(localized: "Watch Later")
         case .playlists:
             String(localized: "Playlists")
+        case .courses:
+            String(localized: "Courses")
         case .history:
             String(localized: "History")
         }
@@ -221,6 +237,8 @@ enum YouTubeNavigationItem: String, Hashable, CaseIterable, Identifiable {
             "clock"
         case .playlists:
             "list.and.film"
+        case .courses:
+            "list.bullet.rectangle.portrait.fill"
         case .history:
             "clock.arrow.circlepath"
         }
@@ -228,7 +246,8 @@ enum YouTubeNavigationItem: String, Hashable, CaseIterable, Identifiable {
 
     var requiresSignIn: Bool {
         switch self {
-        case .home, .search, .explore, .shorts:
+        case .home, .search, .explore, .shorts, .courses:
+            // Courses library is local (playlists played as courses); no login required.
             false
         case .subscriptions, .likedVideos, .watchLater, .playlists, .history:
             true

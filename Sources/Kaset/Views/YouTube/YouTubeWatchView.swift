@@ -26,6 +26,11 @@ struct YouTubeWatchView: View {
 
     @State private var commentDraft = ""
     @State private var settings = SettingsManager.shared
+    @State private var showDownloadSheet = false
+    @State private var showNotesSheet = false
+    /// YouTube web **Ask about this video** panel (Gemini on youtube.com).
+    @State private var isAskExpanded = false
+    @State private var course = YouTubeCourseSession.shared
 
     /// The ambient backdrop style to render: the user's chosen style, or `.off`
     /// when they've disabled the feature in Settings → YouTube.
@@ -58,11 +63,14 @@ struct YouTubeWatchView: View {
             VStack(alignment: .leading, spacing: 16) {
                 self.videoSurface
 
-                // Below the video: title/metadata + comments down the left,
-                // the related rail down the right.
+                // Below the video: metadata + comments left; right column is
+                // YouTube’s real web Ask panel (when open), else course outline
+                // or related videos.
                 HStack(alignment: .top, spacing: 24) {
                     VStack(alignment: .leading, spacing: 16) {
                         self.metadataSection
+
+                        self.watchActionBar
 
                         Divider()
 
@@ -70,13 +78,34 @@ struct YouTubeWatchView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                    self.relatedColumn
-                        .frame(width: 360)
+                    if self.isAskExpanded {
+                        // Native UI; YouTube Ask runs in a hidden WebView.
+                        YouTubeAskNativePanel(videoId: self.video.videoId) {
+                            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                                self.isAskExpanded = false
+                            }
+                        }
+                        .frame(width: 400)
+                        .frame(minHeight: 520)
+                        .frame(maxHeight: 720)
+                    } else if self.showsCourseSidebar {
+                        YouTubeCourseSidebar { lesson in
+                            self.selectCourseLesson(lesson)
+                        }
+                        .frame(width: 340)
+                        .frame(minHeight: 420)
+                    } else {
+                        self.relatedColumn
+                            .frame(width: 360)
+                    }
                 }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 20)
         }
+        // Smoother wheel/trackpad feel; reduces rubber-band “buggy” bounce
+        // when the ambient backdrop + glass bar reflow during scroll.
+        .scrollBounceBehavior(.basedOnSize)
         // PROTOTYPE: full-bleed ambient color behind the page. `.ignoresSafeArea`
         // (inside the modifier) lets it bleed under the bottom player-bar inset,
         // so the bar's Liquid Glass capsule refracts the live color.
@@ -98,16 +127,182 @@ struct YouTubeWatchView: View {
         #endif
             .task {
                 self.startOrAdoptPlayback()
+                self.syncCourseContext()
                 await self.viewModel.load()
-                // Feed the related list to the player so the bar's next/previous
-                // buttons can skip between videos.
-                if self.youtubePlayer.currentVideo?.videoId == self.video.videoId {
-                    self.youtubePlayer.setUpNext(self.viewModel.data.related)
+                self.applyPlayerQueue()
+                self.resumeCoursePositionIfNeeded()
+            }
+            .onChange(of: self.youtubePlayer.currentVideo?.videoId) { _, _ in
+                self.syncCourseContext()
+                self.applyPlayerQueue()
+            }
+            .onChange(of: self.youtubePlayer.watchConclusionGeneration) { _, _ in
+                // Natural finish / skip: mark this lesson complete when it ends
+                // with progress (generation advances only on real conclusions).
+                if self.course.isActive {
+                    // Prefer the video this page was opened for when concluding.
+                    self.course.markCompleted(videoId: self.video.videoId)
                 }
             }
             .onDisappear {
+                // Save resume point for course lessons so “Continue learning” works.
+                if self.course.isActive,
+                   self.course.index(of: self.video.videoId) != nil,
+                   self.youtubePlayer.currentVideo?.videoId == self.video.videoId
+                {
+                    self.course.saveResume(
+                        videoId: self.video.videoId,
+                        seconds: self.youtubePlayer.progress
+                    )
+                }
                 self.youtubePlayer.inlineSurfaceWillDisappear(videoId: self.video.videoId)
             }
+            .sheet(isPresented: self.$showDownloadSheet) {
+                YouTubeDownloadSheet(video: self.video)
+            }
+            .sheet(isPresented: self.$showNotesSheet) {
+                YouTubeNotesSheet(video: self.video, viewModel: self.viewModel)
+            }
+    }
+
+    // MARK: - Course
+
+    private var showsCourseSidebar: Bool {
+        self.course.isActive
+            && self.course.isSidebarVisible
+            && self.course.index(of: self.video.videoId) != nil
+    }
+
+    private func syncCourseContext() {
+        if self.course.isActive {
+            _ = self.course.syncCurrent(to: self.video)
+        }
+    }
+
+    private func applyPlayerQueue() {
+        guard self.youtubePlayer.currentVideo?.videoId == self.video.videoId else { return }
+        if self.course.isActive, self.course.index(of: self.video.videoId) != nil {
+            // Course queue: next lessons in order.
+            self.youtubePlayer.setCourseQueue(self.course.remainingLessons)
+        } else if !self.viewModel.data.related.isEmpty {
+            self.youtubePlayer.setUpNext(self.viewModel.data.related)
+        }
+    }
+
+    private func selectCourseLesson(_ lesson: YouTubeVideo) {
+        HapticService.toggle()
+        self.course.syncCurrent(to: lesson)
+        if self.youtubePlayer.currentVideo?.videoId == lesson.videoId {
+            self.youtubePlayer.dockInline()
+            return
+        }
+        // Keep playing in place and navigate the stack to the lesson.
+        self.youtubePlayer.continueWith(video: lesson)
+        self.youtubePlayer.setCourseQueue(self.course.remainingLessons)
+    }
+
+    /// Jump to the saved course resume timestamp once playback is ready.
+    private func resumeCoursePositionIfNeeded() {
+        guard self.course.isActive,
+              self.youtubePlayer.currentVideo?.videoId == self.video.videoId,
+              let seconds = self.course.resumeSeconds(for: self.video.videoId),
+              seconds > 5
+        else { return }
+        Task { @MainActor in
+            // Give the watch page a moment to attach the video element.
+            try? await Task.sleep(for: .milliseconds(900))
+            guard self.youtubePlayer.currentVideo?.videoId == self.video.videoId else { return }
+            self.youtubePlayer.seek(to: seconds)
+        }
+    }
+
+    // MARK: - Watch Actions
+
+    private var watchActionBar: some View {
+        HStack(spacing: 10) {
+            // YouTube’s real Ask (web) — not Apple Intelligence.
+            Button {
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                    self.isAskExpanded.toggle()
+                }
+                HapticService.toggle()
+            } label: {
+                Label(String(localized: "Ask"), systemImage: "sparkle")
+                    .font(.system(size: 12, weight: .semibold))
+                    .padding(.horizontal, 12)
+                    .frame(height: 30)
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .compatGlass(
+                interactive: true,
+                tint: self.isAskExpanded ? PackageResourceLookup.brandAccent : nil,
+                in: Capsule()
+            )
+            .accessibilityIdentifier(AccessibilityID.YouTubeContent.askButton)
+            .help(String(localized: "Ask about this video — answers from YouTube, shown in Kaset UI"))
+
+            // One-click background download with live % ring.
+            OneClickDownloadButton(video: self.video)
+
+            // Options sheet (quality / Terminal) for power users.
+            Button {
+                self.showDownloadSheet = true
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.system(size: 14, weight: .semibold))
+                    .frame(width: 30, height: 30)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .compatGlass(interactive: true, in: Circle())
+            .help(String(localized: "Download options…"))
+            .accessibilityLabel(String(localized: "Download options"))
+
+            // Generate Lecture Notes button (uses Antigravity CLI)
+            Button {
+                self.showNotesSheet = true
+            } label: {
+                Label(String(localized: "Notes"), systemImage: "doc.text")
+                    .font(.system(size: 12, weight: .semibold))
+                    .padding(.horizontal, 12)
+                    .frame(height: 30)
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .compatGlass(interactive: true, in: Capsule())
+            .help(String(localized: "Generate lecture notes as PDF with Antigravity CLI"))
+            .accessibilityLabel(String(localized: "Generate lecture notes"))
+
+            if self.course.isActive, self.course.index(of: self.video.videoId) != nil {
+                Button {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                        self.course.isSidebarVisible.toggle()
+                    }
+                } label: {
+                    Label(
+                        String(localized: "Course"),
+                        systemImage: self.course.isSidebarVisible
+                            ? "list.bullet.rectangle.portrait.fill"
+                            : "list.bullet.rectangle.portrait"
+                    )
+                    .font(.system(size: 12, weight: .semibold))
+                    .padding(.horizontal, 12)
+                    .frame(height: 30)
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .compatGlass(
+                    interactive: true,
+                    tint: self.course.isSidebarVisible ? Self.brandAccent : nil,
+                    in: Capsule()
+                )
+                .help(String(localized: "Show or hide the course outline"))
+                .accessibilityIdentifier(AccessibilityID.YouTubeContent.courseToggle)
+            }
+
+            Spacer(minLength: 0)
+        }
     }
 
     // MARK: - Ambient Style Picker (PROTOTYPE)
@@ -150,6 +345,12 @@ struct YouTubeWatchView: View {
             && self.youtubePlayer.surfaceLocation == .floating
     }
 
+    /// Whether this view's video is currently collapsed into the in-app mini player.
+    private var playsInMiniPlayer: Bool {
+        self.youtubePlayer.currentVideo?.videoId == self.video.videoId
+            && self.youtubePlayer.surfaceLocation == .miniPlayer
+    }
+
     @ViewBuilder
     private var videoSurface: some View {
         if self.presentsLiveSurface {
@@ -187,6 +388,42 @@ struct YouTubeWatchView: View {
                 }
                 .clipShape(.rect(cornerRadius: 12))
                 .accessibilityIdentifier(AccessibilityID.YouTubeContent.watchSurface)
+        } else if self.playsInMiniPlayer {
+            // Thumbnail placeholder while the video is in the in-app mini player.
+            // Tapping docks it back into this watch view.
+            Button {
+                self.youtubePlayer.dockInline()
+                HapticService.toggle()
+            } label: {
+                CachedAsyncImage(
+                    url: self.video.thumbnailURL,
+                    targetSize: CGSize(width: 1280, height: 720)
+                ) { image in
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                } placeholder: {
+                    Rectangle().fill(.black)
+                }
+                .aspectRatio(16 / 9, contentMode: .fit)
+                .overlay {
+                    VStack(spacing: 12) {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 32))
+                            .foregroundStyle(.white.opacity(0.85))
+                        Text("Playing in mini player — tap to expand", comment: "Watch view placeholder while in mini player")
+                            .font(.callout)
+                            .foregroundStyle(.white.opacity(0.8))
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding()
+                }
+                .clipShape(.rect(cornerRadius: 12))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(String(localized: "Expand from mini player"))
+            .accessibilityIdentifier(AccessibilityID.YouTubeContent.watchSurface)
         } else {
             Button {
                 self.startOrAdoptPlayback()
@@ -218,10 +455,13 @@ struct YouTubeWatchView: View {
     }
 
     /// Starts playback of this view's video, or adopts the surface if this
-    /// video is already playing (e.g. docking back from the floating window).
+    /// video is already playing (e.g. docking back from the mini player or
+    /// the floating window).
     private func startOrAdoptPlayback() {
         if self.youtubePlayer.currentVideo?.videoId == self.video.videoId {
-            if self.youtubePlayer.surfaceLocation == .floating {
+            if self.youtubePlayer.surfaceLocation == .floating
+                || self.youtubePlayer.surfaceLocation == .miniPlayer
+            {
                 self.youtubePlayer.dockInline()
             }
         } else {
@@ -711,4 +951,12 @@ extension AccessibilityID.YouTubeContent {
     static let commentPostButton = "youtubeContent.commentPostButton"
     static let subscribeButton = "youtubeContent.subscribeButton"
     static let watchMoveHere = "youtubeContent.watchMoveHere"
+    static let downloadButton = "youtubeContent.downloadButton"
+    static let askButton = "youtubeContent.askButton"
+    static let aiPanel = "youtubeContent.aiPanel"
+    static let aiQuestionField = "youtubeContent.aiQuestionField"
+    static let aiAskButton = "youtubeContent.aiAskButton"
+    static let askSuggestions = "youtubeContent.askSuggestions"
+    static let askConversation = "youtubeContent.askConversation"
+    static let courseToggle = "youtubeContent.courseToggle"
 }

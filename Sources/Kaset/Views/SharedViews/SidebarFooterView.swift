@@ -8,13 +8,15 @@ struct SidebarFooterView: View {
     var body: some View {
         VStack(spacing: 0) {
             Divider()
-                .opacity(0.3)
-
-            SidebarProfileView()
+                .opacity(0.5)
 
             SourceToggleView()
                 .padding(.horizontal, 12)
-                .padding(.bottom, 8)
+                .padding(.top, 10)
+                .padding(.bottom, 6)
+
+            SidebarProfileView()
+                .padding(.bottom, 4)
         }
     }
 }

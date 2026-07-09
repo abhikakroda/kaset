@@ -376,4 +376,247 @@ enum FoundationModelsPromptLibrary {
             """
         }
     }
+
+    // MARK: - Video Intelligence
+
+    static func videoSummaryInstructions(
+        version: FoundationModelsPromptVersion = .current
+    ) -> String {
+        switch version {
+        case .legacy26_0To26_3:
+            """
+            You summarize YouTube videos for the Kaset app using only the metadata
+            provided (title, channel, views, date, comments snippets, related titles).
+            Never invent transcripts, quotes, or claims that are not supported by
+            that context. Be clear when context is thin.
+            """
+        case .optimized26_4AndLater:
+            """
+            You summarize YouTube videos for Kaset from metadata only.
+            Ground every claim in the provided title, channel, stats, comments,
+            and related titles. Do not invent a transcript or facts not shown.
+            Be concise, useful, and honest about uncertainty.
+            """
+        }
+    }
+
+    static func videoSummaryPrompt(
+        title: String,
+        channelName: String?,
+        viewCountText: String?,
+        publishedText: String?,
+        lengthText: String?,
+        commentSnippets: [String],
+        relatedTitles: [String],
+        version: FoundationModelsPromptVersion = .current
+    ) -> String {
+        let channel = channelName?.isEmpty == false ? channelName! : "Unknown channel"
+        let views = viewCountText ?? "unknown views"
+        let published = publishedText ?? "unknown date"
+        let length = lengthText ?? "unknown length"
+        let comments = commentSnippets.isEmpty
+            ? "(no comments available)"
+            : commentSnippets.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
+        let related = relatedTitles.isEmpty
+            ? "(none)"
+            : relatedTitles.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
+
+        switch version {
+        case .legacy26_0To26_3:
+            return """
+            Summarize this YouTube video from metadata only:
+
+            Title: \(title)
+            Channel: \(channel)
+            Views: \(views)
+            Published: \(published)
+            Length: \(length)
+
+            Sample comments:
+            \(comments)
+
+            Related video titles:
+            \(related)
+
+            Produce a VideoSummary with headline, topics, style, and overview.
+            """
+        case .optimized26_4AndLater:
+            return """
+            Video metadata (no transcript):
+            Title: \(title)
+            Channel: \(channel)
+            Views: \(views)
+            Published: \(published)
+            Length: \(length)
+
+            Sample comments:
+            \(comments)
+
+            Related titles:
+            \(related)
+
+            Task:
+            - Write a one-sentence headline
+            - List 2-4 topics
+            - Name the style/tone
+            - Write a 2-5 sentence overview grounded only in this context
+            """
+        }
+    }
+
+    static func videoQuestionInstructions(
+        version: FoundationModelsPromptVersion = .current
+    ) -> String {
+        switch version {
+        case .legacy26_0To26_3:
+            """
+            You answer user questions about a YouTube video using only the provided
+            metadata context. If the answer cannot be known from that context,
+            say so clearly and suggest what would be needed (e.g. watching the video).
+            """
+        case .optimized26_4AndLater:
+            """
+            Answer questions about a YouTube video using only the supplied metadata.
+            Be helpful and direct. If the metadata cannot answer the question,
+            say so and keep the caveat short. Never invent a transcript.
+            """
+        }
+    }
+
+    static func videoQuestionPrompt(
+        question: String,
+        title: String,
+        channelName: String?,
+        viewCountText: String?,
+        publishedText: String?,
+        lengthText: String?,
+        commentSnippets: [String],
+        relatedTitles: [String],
+        version: FoundationModelsPromptVersion = .current
+    ) -> String {
+        let channel = channelName?.isEmpty == false ? channelName! : "Unknown channel"
+        let views = viewCountText ?? "unknown views"
+        let published = publishedText ?? "unknown date"
+        let length = lengthText ?? "unknown length"
+        let comments = commentSnippets.isEmpty
+            ? "(no comments available)"
+            : commentSnippets.prefix(8).enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
+        let related = relatedTitles.isEmpty
+            ? "(none)"
+            : relatedTitles.prefix(6).enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
+
+        return """
+        Question: \(question)
+
+        Video metadata (no transcript):
+        Title: \(title)
+        Channel: \(channel)
+        Views: \(views)
+        Published: \(published)
+        Length: \(length)
+
+        Sample comments:
+        \(comments)
+
+        Related titles:
+        \(related)
+
+        Answer the question in a VideoAnswer. Use the caveat field when context is insufficient.
+        """
+    }
+
+    /// Multi-turn Ask prompt that includes recent conversation history.
+    static func videoAskConversationPrompt(
+        question: String,
+        priorTurns: [(question: String, answer: String)],
+        title: String,
+        channelName: String?,
+        viewCountText: String?,
+        publishedText: String?,
+        lengthText: String?,
+        commentSnippets: [String],
+        relatedTitles: [String],
+        version: FoundationModelsPromptVersion = .current
+    ) -> String {
+        let base = Self.videoQuestionPrompt(
+            question: question,
+            title: title,
+            channelName: channelName,
+            viewCountText: viewCountText,
+            publishedText: publishedText,
+            lengthText: lengthText,
+            commentSnippets: commentSnippets,
+            relatedTitles: relatedTitles,
+            version: version
+        )
+
+        guard !priorTurns.isEmpty else { return base }
+
+        let history = priorTurns.suffix(4).enumerated().map { index, turn in
+            """
+            Turn \(index + 1)
+            User: \(turn.question)
+            Assistant: \(turn.answer)
+            """
+        }.joined(separator: "\n\n")
+
+        return """
+        \(base)
+
+        Recent conversation (use for follow-ups; still ground facts only in metadata):
+        \(history)
+        """
+    }
+
+    static func videoAskSuggestionInstructions(
+        version: FoundationModelsPromptVersion = .current
+    ) -> String {
+        switch version {
+        case .legacy26_0To26_3:
+            """
+            You invent short, natural viewer questions for YouTube's Ask feature.
+            Questions must be grounded only in the video title, channel, and related
+            metadata — never invent plot details that are not implied by the title.
+            """
+        case .optimized26_4AndLater:
+            """
+            Generate short starter questions for Kaset's Ask feature on a YouTube video.
+            Questions should feel like something a real viewer would tap. Stay grounded
+            in title/channel/metadata only.
+            """
+        }
+    }
+
+    static func videoAskSuggestionPrompt(
+        title: String,
+        channelName: String?,
+        viewCountText: String?,
+        publishedText: String?,
+        lengthText: String?,
+        relatedTitles: [String],
+        version: FoundationModelsPromptVersion = .current
+    ) -> String {
+        let channel = channelName?.isEmpty == false ? channelName! : "Unknown channel"
+        let views = viewCountText ?? "unknown views"
+        let published = publishedText ?? "unknown date"
+        let length = lengthText ?? "unknown length"
+        let related = relatedTitles.isEmpty
+            ? "(none)"
+            : relatedTitles.prefix(6).enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
+
+        return """
+        Video:
+        Title: \(title)
+        Channel: \(channel)
+        Views: \(views)
+        Published: \(published)
+        Length: \(length)
+
+        Related titles:
+        \(related)
+
+        Generate 3-5 short Ask starter questions a viewer might tap (under 12 words each).
+        Cover a mix of: what is this about, who is it for, key takeaways, and a follow-up curiosity.
+        """
+    }
 }

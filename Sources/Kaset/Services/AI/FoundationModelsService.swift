@@ -271,8 +271,17 @@ final class FoundationModelsService {
     /// - Parameter instructions: System instructions for the session.
     /// - Returns: A configured LanguageModelSession, or nil if unavailable.
     func createAnalysisSession(instructions: String) -> LanguageModelSession? {
+        // Always re-check system availability — Ask / lyrics can open long after
+        // launch, and the model may have finished downloading in the meantime.
+        self.refreshAvailability()
+
         guard self.isAvailable else {
             self.logger.warning("Attempted to create analysis session but AI is not available")
+            return nil
+        }
+
+        guard self.supportsLocale(Locale.current) else {
+            self.logger.warning("Analysis session blocked: locale not supported")
             return nil
         }
 
@@ -280,6 +289,41 @@ final class FoundationModelsService {
         return LanguageModelSession(
             instructions: instructions
         )
+    }
+
+    /// Ensures the model is warmed and available before a user-facing Ask call.
+    /// Returns a short failure reason when AI cannot run, otherwise `nil`.
+    func prepareForInteractiveUse() async -> String? {
+        self.refreshAvailability()
+
+        if self.isDisabledByUser {
+            return String(localized: "AI features are turned off in Settings → Intelligence.")
+        }
+
+        switch self.availability {
+        case .available:
+            if !self.isWarmedUp {
+                await self.prewarmSession()
+                self.isWarmedUp = true
+            }
+            guard self.supportsLocale(Locale.current) else {
+                return String(localized: "Apple Intelligence doesn’t support the current language.")
+            }
+            return nil
+        case let .unavailable(reason):
+            switch reason {
+            case .deviceNotEligible:
+                return String(localized: "This Mac doesn’t support Apple Intelligence.")
+            case .appleIntelligenceNotEnabled:
+                return String(localized: "Enable Apple Intelligence in System Settings, then try again.")
+            case .modelNotReady:
+                return String(localized: "Apple Intelligence is still downloading. Try again in a moment.")
+            @unknown default:
+                return String(localized: "Apple Intelligence is currently unavailable.")
+            }
+        @unknown default:
+            return String(localized: "Apple Intelligence is currently unavailable.")
+        }
     }
 
     /// Creates a session for multi-turn conversational interactions.

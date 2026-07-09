@@ -313,14 +313,15 @@ final class YouTubeVideoWindowResizeGuard: NSObject, NSWindowDelegate {
 
 // MARK: - YouTubeVideoWindowContent
 
-/// Floating window content: corner-to-corner video with hover-revealed
-/// chrome — a compact Liquid Glass bar over the bottom of the video and a
-/// small glass backing under the traffic lights. Cursor leaves → all
-/// chrome fades out.
+/// Floating window content: corner-to-corner video with auto-hiding
+/// Liquid Glass chrome. Fullscreen and windowed both idle-hide the control
+/// strip so the picture stays immersive; mouse movement brings it back.
+///
+/// Uses a dedicated slim glass overlay instead of embedding the main-window
+/// `YouTubePlayerBar` (whose safe-area padding and layout caused scroll/jank
+/// when toggling visibility over the WebView).
 private struct YouTubeVideoWindowContent: View {
     @Environment(YouTubePlayerService.self) private var youtubePlayer
-
-    @State private var isHovering = false
 
     /// Height of the top strip that moves the window. Generous enough to be
     /// an easy grab target; the top of the video carries no YouTube controls
@@ -328,48 +329,40 @@ private struct YouTubeVideoWindowContent: View {
     private static let dragStripHeight: CGFloat = 36
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            ZStack(alignment: .bottom) {
-                YouTubeWatchSurfaceView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+        ZStack {
+            YouTubeWatchSurfaceView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // Kill WebView scroll rubber-banding that felt “buggy” in
+                // fullscreen when the trackpad moved while chrome was hidden.
+                .clipped()
 
-                if self.isHovering {
-                    // The full player bar — same items as the main window.
-                    YouTubePlayerBar()
-                        .transition(.opacity)
-                }
-            }
+            // Auto-hiding Liquid Glass controls (fullscreen + windowed).
+            YouTubeFullscreenChrome()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             // Top drag strip: the corner-to-corner WebView reports
             // mouseDownCanMoveWindow == false and swallows mouseDown, so the
             // window's isMovableByWindowBackground is dead everywhere the
             // WebView covers — leaving only the hidden titlebar sliver to grab.
-            // This native strip sits above the WebView and moves the window
-            // explicitly via NSWindow.performDrag.
-            WindowDragHandle()
-                .frame(maxWidth: .infinity)
-                .frame(height: Self.dragStripHeight)
-                .overlay(alignment: .top) {
-                    if self.isHovering {
-                        // Subtle grab affordance so the drag region is
-                        // discoverable without cluttering the chrome-free look.
+            VStack {
+                WindowDragHandle()
+                    .frame(maxWidth: .infinity)
+                    .frame(height: Self.dragStripHeight)
+                    .overlay(alignment: .top) {
                         Capsule()
-                            .fill(.white.opacity(0.35))
+                            .fill(.white.opacity(self.youtubePlayer.isWindowFullscreen ? 0 : 0.28))
                             .frame(width: 36, height: 5)
                             .padding(.top, 7)
-                            .transition(.opacity)
                             .allowsHitTesting(false)
                     }
-                }
+                Spacer(minLength: 0)
+            }
         }
         .background(.black)
         .ignoresSafeArea()
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.18)) {
-                self.isHovering = hovering
-            }
-            YouTubeVideoWindowController.shared.setWindowChromeVisible(hovering)
-        }
+        // Prevent the hosting view from participating in scrollable ancestor
+        // geometry that can jitter during fullscreen transitions.
+        .compositingGroup()
     }
 }
 

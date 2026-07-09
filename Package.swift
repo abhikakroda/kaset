@@ -7,7 +7,7 @@ let package = Package(
     name: "Kaset",
     defaultLocalization: "en",
     platforms: [
-        .macOS("15.4"),
+        .macOS("27.0"),
     ],
     products: [
         .executable(
@@ -64,22 +64,7 @@ let package = Package(
         .testTarget(
             name: "KasetTests",
             dependencies: ["Kaset"],
-            // Tests for Apple-Intelligence-powered features are excluded
-            // because the underlying APIs are macOS 26+ only and Swift
-            // Testing's `@Test` / `@Suite` macros do not compose with
-            // `@available(macOS 26, *)`.
             exclude: [
-                "AIErrorHandlerTests.swift",
-                "AIToolTests.swift",
-                "CommandBarViewModelTests.swift",
-                "CommandExecutorTests.swift",
-                "CommandIntentParserTests.swift",
-                "FoundationModelsOptimizedPromptIntegrationTests.swift",
-                "FoundationModelsPromptLibraryTests.swift",
-                "FoundationModelsServiceTests.swift",
-                "FoundationModelsTests.swift",
-                "MusicIntentIntegrationTests.swift",
-                "MusicIntentTests.swift",
             ],
             resources: [
                 .process("Fixtures"),

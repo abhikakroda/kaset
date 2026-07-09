@@ -28,6 +28,11 @@ struct YouTubeSidebar: View {
                 self.row(for: .shorts)
             }
 
+            // Learning — local course library (folders + playlists played as courses)
+            Section(String(localized: "Learning")) {
+                self.row(for: .courses)
+            }
+
             if self.hasPersonalAccount {
                 // Collection section
                 Section(String(localized: "Collection")) {

@@ -24,6 +24,9 @@ enum DiagnosticsLogger {
     /// Logger for AI/Foundation Models-related events.
     static let ai = Logger(subsystem: "com.sertacozercan.Kaset", category: "AI")
 
+    /// Logger for yt-dlp / media download events.
+    static let download = Logger(subsystem: "com.sertacozercan.Kaset", category: "Download")
+
     /// Logger for haptic feedback-related events.
     static let haptic = Logger(subsystem: "com.sertacozercan.Kaset", category: "Haptic")
 

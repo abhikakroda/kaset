@@ -1,0 +1,444 @@
+import AppKit
+import Foundation
+import Observation
+
+// MARK: - LectureNotesService
+
+/// Service that generates structured lecture notes from a YouTube video using
+/// Antigravity CLI (`agy`), then renders them as a LaTeX PDF saved to
+/// ~/Downloads.
+///
+/// Flow:
+/// 1. Gather video context (title, channel, comments, captions context).
+/// 2. Send context to `agy --print` to generate structured LaTeX notes.
+/// 3. Parse the LaTeX output.
+/// 4. Compile LaTeX → PDF using the system's `pdflatex` or `tectonic`.
+/// 5. Save the PDF to ~/Downloads.
+@MainActor
+@Observable
+final class LectureNotesService {
+    // MARK: - State
+
+    enum GenerationState: Equatable {
+        case idle
+        case generatingNotes
+        case renderingPDF
+        case completed(URL)
+        case failed(String)
+    }
+
+    private(set) var state: GenerationState = .idle
+    private(set) var latexSource: String?
+    private(set) var notesTitle: String?
+    private(set) var notesSections: [String] = []
+
+    private let logger = DiagnosticsLogger.ai
+
+    // MARK: - Public API
+
+    /// Generates lecture notes for the given video context and exports as PDF.
+    ///
+    /// - Parameters:
+    ///   - videoTitle: The video's title.
+    ///   - channelName: The channel/instructor name.
+    ///   - metadata: Additional metadata (views, published date, length).
+    ///   - comments: Top comments for additional context.
+    ///   - captionsContext: Any available caption/transcript text.
+    /// - Returns: URL of the generated PDF (or .tex fallback).
+    func generateAndExport(
+        videoTitle: String,
+        channelName: String?,
+        metadata: String,
+        comments: [String],
+        captionsContext: String?
+    ) async throws -> URL {
+        self.state = .generatingNotes
+        self.latexSource = nil
+        self.notesTitle = nil
+        self.notesSections = []
+
+        // Step 1: Generate LaTeX notes via Antigravity CLI
+        let latex: String
+        do {
+            latex = try await self.generateLatexViaAgy(
+                videoTitle: videoTitle,
+                channelName: channelName,
+                metadata: metadata,
+                comments: comments,
+                captionsContext: captionsContext
+            )
+            self.latexSource = latex
+            self.notesTitle = videoTitle
+        } catch {
+            let message = error.localizedDescription
+            self.state = .failed(message)
+            throw error
+        }
+
+        // Step 2: Compile to PDF
+        self.state = .renderingPDF
+        do {
+            let pdfURL = try await self.compileToPDF(latex: latex, title: videoTitle)
+            self.state = .completed(pdfURL)
+            return pdfURL
+        } catch {
+            self.state = .failed(error.localizedDescription)
+            throw error
+        }
+    }
+
+    /// Resets the service state for a new generation.
+    func reset() {
+        self.state = .idle
+        self.latexSource = nil
+        self.notesTitle = nil
+        self.notesSections = []
+    }
+
+    // MARK: - Antigravity CLI Generation
+
+    private func generateLatexViaAgy(
+        videoTitle: String,
+        channelName: String?,
+        metadata: String,
+        comments: [String],
+        captionsContext: String?
+    ) async throws -> String {
+        // Find agy binary
+        guard let agyPath = self.findAgyBinary() else {
+            throw LectureNotesError.agyNotFound
+        }
+
+        let commentsBlock = comments.prefix(10)
+            .enumerated()
+            .map { "  \($0.offset + 1). \($0.element)" }
+            .joined(separator: "\n")
+
+        let captionsBlock: String
+        if let captions = captionsContext, !captions.isEmpty {
+            captionsBlock = """
+
+            Transcript/Captions:
+            \(String(captions.prefix(4000)))
+            """
+        } else {
+            captionsBlock = "\n(No transcript available — infer structure from title, comments, and metadata.)"
+        }
+
+        let prompt = """
+        Generate comprehensive LaTeX lecture notes for this YouTube video. Output ONLY the LaTeX source code, nothing else. Do not wrap in markdown code blocks.
+
+        Video Information:
+        Title: \(videoTitle)
+        Channel/Instructor: \(channelName ?? "Unknown")
+        \(metadata)
+
+        Top viewer comments (for context on content):
+        \(commentsBlock.isEmpty ? "(none)" : commentsBlock)
+        \(captionsBlock)
+
+        Requirements for the LaTeX document:
+        - Use \\documentclass[11pt, a4paper]{article}
+        - Include packages: inputenc, fontenc, lmodern, geometry (1in margins), enumitem, hyperref, xcolor, titlesec, fancyhdr
+        - Use a purple accent color for section headings
+        - Include: title, abstract, key concepts (itemize), 3-6 detailed sections, key takeaways (enumerate), and references/further reading if applicable
+        - Use fancyhdr with "Lecture Notes" on the left and "Generated by Kaset" on the right
+        - Make it comprehensive enough for a student to study from
+        - Escape all special LaTeX characters properly in the content
+
+        Output the complete LaTeX document from \\documentclass to \\end{document}.
+        """
+
+        self.logger.info("Generating lecture notes via agy for: \(videoTitle)")
+
+        let output = try await self.runAgy(binary: agyPath, prompt: prompt)
+
+        // Extract LaTeX from the output (strip any markdown fences if present)
+        let latex = Self.extractLatex(from: output)
+
+        guard !latex.isEmpty else {
+            throw LectureNotesError.noContent
+        }
+
+        // Parse section headings for preview
+        self.notesSections = Self.parseSectionHeadings(from: latex)
+
+        return latex
+    }
+
+    /// Runs `agy --print` with the given prompt and returns stdout.
+    private func runAgy(binary: String, prompt: String) async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: binary)
+            process.arguments = ["--print", prompt]
+            // Run in a temp directory to avoid agy reading project files
+            process.currentDirectoryURL = FileManager.default.temporaryDirectory
+
+            let stdoutPipe = Pipe()
+            let stderrPipe = Pipe()
+            process.standardOutput = stdoutPipe
+            process.standardError = stderrPipe
+
+            do {
+                try process.run()
+            } catch {
+                continuation.resume(throwing: LectureNotesError.agyExecutionFailed(error.localizedDescription))
+                return
+            }
+
+            process.waitUntilExit()
+
+            let outputData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: outputData, encoding: .utf8) ?? ""
+
+            if process.terminationStatus != 0 {
+                let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+                let errorOutput = String(data: stderrData, encoding: .utf8) ?? ""
+                continuation.resume(
+                    throwing: LectureNotesError.agyExecutionFailed(
+                        "agy exited with code \(process.terminationStatus): \(errorOutput.prefix(300))"
+                    )
+                )
+            } else {
+                continuation.resume(returning: output)
+            }
+        }
+    }
+
+    /// Extracts LaTeX content from agy output, stripping markdown fences if present.
+    private static func extractLatex(from output: String) -> String {
+        var text = output.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Strip markdown code fences if agy wraps it
+        if text.hasPrefix("```latex") || text.hasPrefix("```tex") {
+            if let firstNewline = text.firstIndex(of: "\n") {
+                text = String(text[text.index(after: firstNewline)...])
+            }
+        } else if text.hasPrefix("```") {
+            if let firstNewline = text.firstIndex(of: "\n") {
+                text = String(text[text.index(after: firstNewline)...])
+            }
+        }
+        if text.hasSuffix("```") {
+            text = String(text.dropLast(3))
+        }
+
+        text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Ensure it starts with \documentclass
+        if let docStart = text.range(of: "\\documentclass") {
+            text = String(text[docStart.lowerBound...])
+        }
+
+        return text
+    }
+
+    /// Parses section headings from LaTeX for the UI preview.
+    private static func parseSectionHeadings(from latex: String) -> [String] {
+        var headings: [String] = []
+        let pattern = #"\\section\*?\{([^}]+)\}"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let matches = regex.matches(in: latex, range: NSRange(latex.startIndex..., in: latex))
+        for match in matches {
+            if let range = Range(match.range(at: 1), in: latex) {
+                headings.append(String(latex[range]))
+            }
+        }
+        return headings
+    }
+
+    // MARK: - Binary Discovery
+
+    private func findAgyBinary() -> String? {
+        // NSHomeDirectory() returns the sandbox container in a sandboxed app.
+        // Use getpwuid to get the real user home directory.
+        let realHome: String
+        if let pw = getpwuid(getuid()), let homeDir = pw.pointee.pw_dir {
+            realHome = String(cString: homeDir)
+        } else {
+            realHome = "/Users/\(NSUserName())"
+        }
+
+        let candidates = [
+            "\(realHome)/.local/bin/agy",
+            "/opt/homebrew/bin/agy",
+            "/usr/local/bin/agy",
+            "/opt/local/bin/agy",
+            "\(realHome)/.antigravity/bin/agy",
+            "\(realHome)/bin/agy",
+        ]
+
+        if let found = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
+            self.logger.info("Found agy at: \(found)")
+            return found
+        }
+
+        // Last resort: ask the shell
+        if let which = Self.which("agy"), FileManager.default.isExecutableFile(atPath: which) {
+            self.logger.info("Found agy via which: \(which)")
+            return which
+        }
+
+        self.logger.error("agy binary not found in any known location")
+        return nil
+    }
+
+    private static func which(_ name: String) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
+        process.arguments = [name]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let path = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return path?.isEmpty == false ? path : nil
+        } catch {
+            return nil
+        }
+    }
+
+    // MARK: - PDF Compilation
+
+    private func compileToPDF(latex: String, title: String) async throws -> URL {
+        let fileManager = FileManager.default
+        let tempDir = fileManager.temporaryDirectory.appendingPathComponent("kaset-notes-\(UUID().uuidString)")
+        try fileManager.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+        let texFile = tempDir.appendingPathComponent("notes.tex")
+        try latex.write(to: texFile, atomically: true, encoding: .utf8)
+
+        // Try tectonic first (single-pass, no TeX Live needed), then pdflatex
+        let compilerPath = self.findLatexCompiler()
+
+        let downloadsURL = fileManager.urls(for: .downloadsDirectory, in: .userDomainMask).first
+            ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Downloads")
+        let sanitizedTitle = String(
+            title
+                .replacingOccurrences(of: "/", with: "-")
+                .replacingOccurrences(of: ":", with: "-")
+                .replacingOccurrences(of: "\"", with: "")
+                .prefix(80)
+        )
+
+        if let compiler = compilerPath {
+            let pdfFile: URL
+            if compiler.hasSuffix("tectonic") {
+                pdfFile = try await self.runTectonic(compiler: compiler, texFile: texFile, tempDir: tempDir)
+            } else {
+                pdfFile = try await self.runPdflatex(compiler: compiler, texFile: texFile, tempDir: tempDir)
+            }
+
+            let destName = "\(sanitizedTitle) — Notes.pdf"
+            let destURL = downloadsURL.appendingPathComponent(destName)
+
+            try? fileManager.removeItem(at: destURL)
+            try fileManager.copyItem(at: pdfFile, to: destURL)
+
+            // Cleanup temp
+            try? fileManager.removeItem(at: tempDir)
+
+            self.logger.info("Lecture notes PDF saved to: \(destURL.path)")
+            return destURL
+        } else {
+            // No LaTeX compiler — save the .tex source directly
+            let destName = "\(sanitizedTitle) — Notes.tex"
+            let destURL = downloadsURL.appendingPathComponent(destName)
+
+            try? fileManager.removeItem(at: destURL)
+            try latex.write(to: destURL, atomically: true, encoding: .utf8)
+
+            try? fileManager.removeItem(at: tempDir)
+
+            self.logger.warning("No LaTeX compiler found — saved .tex source to Downloads")
+            return destURL
+        }
+    }
+
+    private func findLatexCompiler() -> String? {
+        let candidates = [
+            "/opt/homebrew/bin/tectonic",
+            "/usr/local/bin/tectonic",
+            "/opt/homebrew/bin/pdflatex",
+            "/usr/local/bin/pdflatex",
+            "/Library/TeX/texbin/pdflatex",
+            "/usr/texbin/pdflatex",
+        ]
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    private func runTectonic(compiler: String, texFile: URL, tempDir: URL) async throws -> URL {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: compiler)
+        process.arguments = [texFile.path]
+        process.currentDirectoryURL = tempDir
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        try process.run()
+        process.waitUntilExit()
+
+        let pdfFile = tempDir.appendingPathComponent("notes.pdf")
+        guard FileManager.default.fileExists(atPath: pdfFile.path) else {
+            let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            throw LectureNotesError.compilationFailed("tectonic failed: \(String(output.suffix(200)))")
+        }
+        return pdfFile
+    }
+
+    private func runPdflatex(compiler: String, texFile: URL, tempDir: URL) async throws -> URL {
+        // Run pdflatex twice for references/TOC
+        for _ in 0 ..< 2 {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: compiler)
+            process.arguments = [
+                "-interaction=nonstopmode",
+                "-output-directory=\(tempDir.path)",
+                texFile.path,
+            ]
+            process.currentDirectoryURL = tempDir
+
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = pipe
+
+            try process.run()
+            process.waitUntilExit()
+        }
+
+        let pdfFile = tempDir.appendingPathComponent("notes.pdf")
+        guard FileManager.default.fileExists(atPath: pdfFile.path) else {
+            throw LectureNotesError.compilationFailed("pdflatex did not produce output PDF")
+        }
+        return pdfFile
+    }
+}
+
+// MARK: - LectureNotesError
+
+enum LectureNotesError: LocalizedError {
+    case agyNotFound
+    case agyExecutionFailed(String)
+    case compilationFailed(String)
+    case noContent
+
+    var errorDescription: String? {
+        switch self {
+        case .agyNotFound:
+            return "Antigravity CLI (agy) not found. Install it with: curl -fsSL https://antigravity.google/cli/install.sh | bash"
+        case let .agyExecutionFailed(detail):
+            return "Antigravity CLI failed: \(detail)"
+        case let .compilationFailed(detail):
+            return "PDF compilation failed: \(detail)"
+        case .noContent:
+            return "Antigravity did not generate any LaTeX content."
+        }
+    }
+}

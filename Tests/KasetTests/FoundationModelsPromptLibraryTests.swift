@@ -1,7 +1,7 @@
 import Testing
 @testable import Kaset
 
-@available(macOS 26.0, *)
+
 
 @Suite(.tags(.model))
 struct FoundationModelsPromptLibraryTests {
