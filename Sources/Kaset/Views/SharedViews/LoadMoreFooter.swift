@@ -34,6 +34,10 @@ struct LoadMoreFooter: View {
         .task {
             await self.autoLoadIfNeeded()
         }
+        .onChange(of: self.isLoading) { _, isLoading in
+            guard !isLoading else { return }
+            Task { await self.autoLoadIfNeeded() }
+        }
         .onDisappear {
             self.didAutoLoadForCurrentAppearance = false
         }

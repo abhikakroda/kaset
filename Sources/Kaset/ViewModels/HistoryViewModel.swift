@@ -34,6 +34,9 @@ final class HistoryViewModel {
     /// Whether a user-visible continuation load is currently in flight.
     private var isLoadingMoreSections = false
 
+    /// Whether a refresh is currently rewinding the history cursor.
+    private(set) var isRefreshingHistory = false
+
     /// Monotonic token used to discard stale continuation results after refreshes/resets.
     private var loadGeneration = 0
 
@@ -104,6 +107,7 @@ final class HistoryViewModel {
         self.continuationsLoaded = 0
         self.pendingContinuationSkips = 0
         self.isLoadingMoreSections = false
+        self.isRefreshingHistory = false
         self.lastSeenPlaybackVideoId = nil
     }
 
@@ -138,6 +142,7 @@ final class HistoryViewModel {
     func loadMore() async {
         guard self.hasMoreSections,
               self.continuationTask == nil,
+              !self.isRefreshingHistory,
               self.loadingState == .loaded
         else { return }
 
@@ -204,6 +209,11 @@ final class HistoryViewModel {
     /// Returns true if data changed, false otherwise.
     @discardableResult
     func refresh() async -> Bool {
+        guard !self.isRefreshingHistory else { return false }
+
+        self.isRefreshingHistory = true
+        defer { self.isRefreshingHistory = false }
+
         await self.cancelInFlightContinuation()
         let generation = self.loadGeneration
 

@@ -76,6 +76,7 @@ final class MockYTMusicClient: YTMusicClientProtocol { // swiftlint:disable:this
     var unsubscribeFromArtistDelay: Duration?
     var rateSongDelay: Duration?
     var getSongDelay: Duration?
+    var getHistoryDelay: Duration?
     var getPodcastsDelay: Duration?
     var getPlaylistDelay: Duration?
     var playlistContinuationDelay: Duration?
@@ -405,6 +406,9 @@ final class MockYTMusicClient: YTMusicClientProtocol { // swiftlint:disable:this
     func getHistory() async throws -> HomeResponse {
         self.getHistoryCallCount += 1
         self._historyContinuationIndex = 0
+        if let getHistoryDelay {
+            try? await Task.sleep(for: getHistoryDelay)
+        }
         if let error = shouldThrowError {
             throw error
         }
@@ -1215,6 +1219,7 @@ final class MockYTMusicClient: YTMusicClientProtocol { // swiftlint:disable:this
         self.unsubscribeFromArtistDelay = nil
         self.rateSongDelay = nil
         self.getSongDelay = nil
+        self.getHistoryDelay = nil
         self.mixQueueDelay = nil
         self.getRadioQueueDelay = nil
         self.mixQueueResult = RadioQueueResult(songs: [], continuationToken: nil)

@@ -168,6 +168,31 @@ struct HistoryViewModelTests {
         #expect(self.mockClient.getHistoryContinuationCallCount == 3)
     }
 
+    @Test("Load more is blocked while refresh rewinds the history cursor")
+    func loadMoreBlockedWhileRefreshRewindsHistoryCursor() async {
+        let initialSection = TestFixtures.makeHomeSection(id: "today", title: "Today")
+        let yesterdaySection = TestFixtures.makeHomeSection(id: "yesterday", title: "Yesterday")
+        let olderSection = TestFixtures.makeHomeSection(id: "older", title: "Older")
+        self.mockClient.historyResponse = HomeResponse(sections: [initialSection])
+        self.mockClient.historyContinuationSections = [[yesterdaySection], [olderSection]]
+
+        await self.viewModel.load()
+        await self.viewModel.loadMore()
+        #expect(self.viewModel.sections.map(\.title) == ["Today", "Yesterday"])
+
+        self.mockClient.getHistoryDelay = .milliseconds(100)
+        let refreshTask = Task { await self.viewModel.refresh() }
+        await self.waitForHistoryRefresh {
+            self.mockClient.getHistoryCallCount == 2
+        }
+
+        await self.viewModel.loadMore()
+        _ = await refreshTask.value
+
+        #expect(self.mockClient.getHistoryContinuationCallCount == 1)
+        #expect(self.viewModel.sections.map(\.title) == ["Today", "Yesterday"])
+    }
+
     @Test("Empty history retry leaves loading state loaded")
     func emptyHistoryRetryLeavesLoadedState() async {
         self.mockClient.shouldThrowError = YTMusicError.networkError(underlying: URLError(.notConnectedToInternet))

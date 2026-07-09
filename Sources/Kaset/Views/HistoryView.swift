@@ -164,7 +164,7 @@ struct HistoryView: View {
 
                 if self.viewModel.hasMoreSections || self.viewModel.loadingState == .loadingMore {
                     LoadMoreFooter(
-                        isLoading: self.viewModel.loadingState == .loadingMore,
+                        isLoading: self.viewModel.loadingState == .loadingMore || self.viewModel.isRefreshingHistory,
                         title: "Load More History",
                         loadingTitle: "Loading more history...",
                         autoLoad: true
