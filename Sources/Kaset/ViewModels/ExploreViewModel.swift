@@ -80,7 +80,7 @@ final class ExploreViewModel {
         }
 
         do {
-            if let additionalSections = try await getContinuationForCurrentSource() {
+            if let additionalSections = try await self.getContinuationForCurrentSource() {
                 guard generation == self.loadGeneration else { return }
                 // Filter out Charts section since it's available in the sidebar
                 let sectionsToAppend = additionalSections.filter { !self.isChartsSection($0) }
