@@ -31,6 +31,7 @@ final class PodcastsViewModel {
 
     /// Current explicit continuation request, cancelled on account switch.
     @ObservationIgnored private var continuationTask: Task<Void, Never>?
+    @ObservationIgnored private var continuationTaskID: UUID?
 
     /// Incremented whenever foreground load results should no longer be
     /// allowed to mutate this view model (account switch, refresh, or a
@@ -139,15 +140,18 @@ final class PodcastsViewModel {
 
         let generation = self.loadGeneration
         let accountId = self.accountId
+        let taskID = UUID()
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
-            await self.performLoadMore(generation: generation, accountId: accountId)
+            await self.performLoadMore(generation: generation, accountId: accountId, taskID: taskID)
         }
         self.continuationTask = task
+        self.continuationTaskID = taskID
+        defer { self.clearContinuationTaskIfCurrent(taskID) }
         await task.value
     }
 
-    private func performLoadMore(generation: Int, accountId: String?) async {
+    private func performLoadMore(generation: Int, accountId: String?, taskID: UUID) async {
         guard self.isCurrentLoad(generation: generation, accountId: accountId),
               !Task.isCancelled
         else { return }
@@ -157,7 +161,7 @@ final class PodcastsViewModel {
         defer {
             if self.isCurrentLoad(generation: generation, accountId: accountId) {
                 self.isLoadingMoreSections = false
-                self.continuationTask = nil
+                self.clearContinuationTaskIfCurrent(taskID)
                 if self.loadingState == .loadingMore {
                     self.loadingState = .loaded
                 }
@@ -195,6 +199,7 @@ final class PodcastsViewModel {
     private func resetContentForAccountSwitch() {
         self.continuationTask?.cancel()
         self.continuationTask = nil
+        self.continuationTaskID = nil
         self.client.resetSessionStateForAccountSwitch()
         self.loadGeneration += 1
         self.sections = []
@@ -206,10 +211,17 @@ final class PodcastsViewModel {
     private func cancelInFlightContinuation() async {
         guard let continuationTask else { return }
         self.loadGeneration += 1
+        self.continuationTask = nil
+        self.continuationTaskID = nil
         continuationTask.cancel()
         await continuationTask.value
-        self.continuationTask = nil
         self.isLoadingMoreSections = false
+    }
+
+    private func clearContinuationTaskIfCurrent(_ taskID: UUID) {
+        guard self.continuationTaskID == taskID else { return }
+        self.continuationTask = nil
+        self.continuationTaskID = nil
     }
 
     private func isCurrentLoad(generation: Int, accountId: String?) -> Bool {

@@ -21,6 +21,7 @@ final class HistoryViewModel {
     // swiftformat:disable modifierOrder
     /// Explicit user-requested continuation task, cancelled in reset.
     @ObservationIgnored private var continuationTask: Task<Void, Never>?
+    @ObservationIgnored private var continuationTaskID: UUID?
     /// Task for delayed playback-driven refreshes, cancelled in deinit/reset.
     @ObservationIgnored private var playbackRefreshTask: Task<Void, Never>?
     // swiftformat:enable modifierOrder
@@ -98,6 +99,7 @@ final class HistoryViewModel {
     func reset() {
         self.continuationTask?.cancel()
         self.continuationTask = nil
+        self.continuationTaskID = nil
         self.playbackRefreshTask?.cancel()
         self.loadGeneration += 1
         self.loadingState = .idle
@@ -147,15 +149,18 @@ final class HistoryViewModel {
         else { return }
 
         let generation = self.loadGeneration
+        let taskID = UUID()
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
-            await self.performLoadMore(generation: generation)
+            await self.performLoadMore(generation: generation, taskID: taskID)
         }
         self.continuationTask = task
+        self.continuationTaskID = taskID
+        defer { self.clearContinuationTaskIfCurrent(taskID) }
         await task.value
     }
 
-    private func performLoadMore(generation: Int) async {
+    private func performLoadMore(generation: Int, taskID: UUID) async {
         guard generation == self.loadGeneration, !Task.isCancelled else { return }
 
         self.isLoadingMoreSections = true
@@ -163,7 +168,7 @@ final class HistoryViewModel {
         defer {
             if generation == self.loadGeneration {
                 self.isLoadingMoreSections = false
-                self.continuationTask = nil
+                self.clearContinuationTaskIfCurrent(taskID)
                 if self.loadingState == .loadingMore {
                     self.loadingState = .loaded
                 }
@@ -290,13 +295,20 @@ final class HistoryViewModel {
     private func cancelInFlightContinuation() async {
         guard let continuationTask else { return }
         self.loadGeneration += 1
+        self.continuationTask = nil
+        self.continuationTaskID = nil
         continuationTask.cancel()
         await continuationTask.value
-        self.continuationTask = nil
         self.isLoadingMoreSections = false
         if self.loadingState == .loadingMore {
             self.loadingState = .loaded
         }
+    }
+
+    private func clearContinuationTaskIfCurrent(_ taskID: UUID) {
+        guard self.continuationTaskID == taskID else { return }
+        self.continuationTask = nil
+        self.continuationTaskID = nil
     }
 
     /// Compares refreshed first-page sections using stable section and item identifiers.
