@@ -19,6 +19,56 @@ struct YouTubeWatchSurfaceView: NSViewRepresentable {
     }
 }
 
+// MARK: - ScrollForwardingWKWebView
+
+/// `WKWebView` that never keeps trackpad/mouse-wheel scrolls for its own
+/// document. Extracted YouTube surfaces have no page chrome to scroll, so
+/// events are forwarded to the enclosing SwiftUI `ScrollView` / responder chain.
+///
+/// Clicks, drags, and media keys still hit the WebView normally.
+final class ScrollForwardingWKWebView: WKWebView {
+    override func scrollWheel(with event: NSEvent) {
+        Self.forwardScroll(event, from: self)
+    }
+
+    /// Also catch magnify-style two-finger pans that sometimes arrive as
+    /// smart-magnify / swipe variants on newer macOS.
+    override func wantsScrollEventsForSwipeTracking(on axis: NSEvent.GestureAxis) -> Bool {
+        // Do not claim swipe tracking — let the parent ScrollView own it.
+        false
+    }
+
+    static func forwardScroll(_ event: NSEvent, from view: NSView) {
+        // Prefer the nearest NSScrollView (SwiftUI ScrollView backing).
+        if let scrollView = view.enclosingScrollView {
+            scrollView.scrollWheel(with: event)
+            return
+        }
+        // Walk the responder / superview chain until something handles it.
+        var responder: NSResponder? = view.nextResponder
+        while let current = responder {
+            if let scrollView = current as? NSScrollView {
+                scrollView.scrollWheel(with: event)
+                return
+            }
+            responder = current.nextResponder
+        }
+        var ancestor: NSView? = view.superview
+        while let current = ancestor {
+            if let scrollView = current as? NSScrollView {
+                scrollView.scrollWheel(with: event)
+                return
+            }
+            if let scrollView = current.enclosingScrollView {
+                scrollView.scrollWheel(with: event)
+                return
+            }
+            ancestor = current.superview
+        }
+        view.nextResponder?.scrollWheel(with: event)
+    }
+}
+
 // MARK: - YouTubeWatchContainerView
 
 /// Custom NSView that keeps the WebView sized with the container and
@@ -49,15 +99,6 @@ final class YouTubeWatchContainerView: NSView {
     }
 
     override func scrollWheel(with event: NSEvent) {
-        // The WKWebView swallows scroll-wheel events for its internal
-        // document scrolling. Since we strip all YouTube page chrome and
-        // only show the video surface, there is nothing to scroll inside
-        // the WebView. Forward the event to the enclosing NSScrollView
-        // (SwiftUI's ScrollView backing) so the watch page scrolls normally.
-        if let scrollView = self.enclosingScrollView {
-            scrollView.scrollWheel(with: event)
-        } else {
-            self.nextResponder?.scrollWheel(with: event)
-        }
+        ScrollForwardingWKWebView.forwardScroll(event, from: self)
     }
 }

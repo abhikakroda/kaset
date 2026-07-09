@@ -566,14 +566,18 @@ final class YouTubeAskService: NSObject {
 
       // Boot sequence
       silence();
+      // Lighter boot: fewer polls, stop early. Aggressive MutationObservers
+      // on a full YouTube page made the whole app feel laggy.
       var tries = 0;
       var boot = setInterval(function() {
         silence();
         var opened = openAsk();
         tries += 1;
-        var chips = scrapeSuggestions();
-        if (chips.length) post({ type: 'suggestions', suggestions: chips });
-        if (opened || tries > 25) {
+        if (tries === 3 || tries === 8 || opened) {
+          var chips = scrapeSuggestions();
+          if (chips.length) post({ type: 'suggestions', suggestions: chips });
+        }
+        if (opened || tries > 12) {
           clearInterval(boot);
           var meta = scrapeMeta();
           if (opened) {
@@ -581,7 +585,7 @@ final class YouTubeAskService: NSObject {
             setTimeout(function() {
               var more = scrapeSuggestions();
               if (more.length) post({ type: 'suggestions', suggestions: more });
-            }, 1500);
+            }, 1200);
           } else {
             post({
               type: 'fallbackMeta',
@@ -594,7 +598,7 @@ final class YouTubeAskService: NSObject {
             });
           }
         }
-      }, 700);
+      }, 900);
     })();
     """#
 }

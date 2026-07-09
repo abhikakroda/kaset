@@ -38,14 +38,15 @@ struct YouTubeWatchView: View {
         self.settings.resolvedAmbientStyle
     }
 
-    /// 0…1 playback position, only while THIS view's video is the one playing,
-    /// for the `.live` storyboard crossfade. `nil` otherwise (guards NaN when
-    /// duration is still 0 at cold load).
+    /// 0…1 playback position for `.live` ambient crossfade.
+    /// Quantized to 5% steps so continuous player progress does not
+    /// re-render the whole watch page every tick (major lag source).
     private var ambientLiveFraction: Double? {
         guard self.youtubePlayer.currentVideo?.videoId == self.video.videoId,
               self.youtubePlayer.duration > 0
         else { return nil }
-        return min(max(self.youtubePlayer.progress / self.youtubePlayer.duration, 0), 1)
+        let raw = min(max(self.youtubePlayer.progress / self.youtubePlayer.duration, 0), 1)
+        return (raw * 20).rounded() / 20
     }
 
     /// Storyboard spec for the fine-grained `.live` color, but only while THIS
@@ -356,10 +357,16 @@ struct YouTubeWatchView: View {
         if self.presentsLiveSurface {
             // Clean video surface — playback is controlled from the
             // Liquid Glass player bar at the bottom of the window.
+            // ScrollForwardingWKWebView (inside the surface) forwards
+            // trackpad scrolls so the parent ScrollView still moves when
+            // the cursor is over the video.
             YouTubeWatchSurfaceView()
                 .aspectRatio(16 / 9, contentMode: .fit)
                 .clipShape(.rect(cornerRadius: 12))
                 .accessibilityIdentifier(AccessibilityID.YouTubeContent.watchSurface)
+                // Drawing isolation so video layer compositing doesn't
+                // force full-page invalidation on every progress tick.
+                .compositingGroup()
         } else if self.playsInFloatingWindow {
             // Native PiP-style placeholder while the video plays in the
             // pop-out window.

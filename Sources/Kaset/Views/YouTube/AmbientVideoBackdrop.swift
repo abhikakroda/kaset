@@ -89,7 +89,9 @@ struct AmbientVideoBackdrop: View {
             if self.style == .soft || self.reduceMotion {
                 self.auroraLayer(size: geo.size, time: nil)
             } else {
-                TimelineView(.animation) { timeline in
+                // ~12 fps is plenty for a soft glow and avoids TimelineView
+                // redrawing the whole watch hierarchy at display refresh.
+                TimelineView(.periodic(from: .now, by: 1.0 / 12.0)) { timeline in
                     self.auroraLayer(
                         size: geo.size,
                         time: timeline.date.timeIntervalSinceReferenceDate
@@ -130,7 +132,8 @@ struct AmbientVideoBackdrop: View {
                 Self.aurora(colors: upperColors, size: size, time: time, colorScheme: self.colorScheme, intensity: intensity)
                     .opacity(blend)
             }
-            .animation(.easeInOut(duration: 0.7), value: self.liveFraction)
+            // No explicit animation on liveFraction — quantized steps + periodic
+            // TimelineView already smooth enough; continuous animation was laggy.
         }
     }
 

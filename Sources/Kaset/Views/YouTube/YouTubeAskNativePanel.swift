@@ -43,8 +43,9 @@ struct YouTubeAskNativePanel: View {
             )
         }
         .onDisappear {
-            // Keep the hidden session warm while browsing the same video;
-            // full tear-down when leaving the watch surface is fine.
+            // Tear down the hidden YouTube page when Ask closes — leaving a
+            // full watch WebView + mutation observers alive is a major lag source.
+            self.askService.tearDown(keepMessages: true)
         }
     }
 

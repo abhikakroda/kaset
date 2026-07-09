@@ -69,7 +69,9 @@ final class YouTubeWatchWebView {
             targetVolume: playerService.volume
         )
 
-        let newWebView = WKWebView(frame: .zero, configuration: configuration)
+        // ScrollForwardingWKWebView so trackpad scroll over the video
+        // reaches the parent SwiftUI ScrollView instead of dying inside WK.
+        let newWebView = ScrollForwardingWKWebView(frame: .zero, configuration: configuration)
         newWebView.navigationDelegate = self.coordinator
         newWebView.customUserAgent = WebKitManager.userAgent
         self.webKitManager = webKitManager
@@ -77,6 +79,8 @@ final class YouTubeWatchWebView {
 
         // Kill the white flash between page navigations.
         newWebView.underPageBackgroundColor = .black
+        // Avoid swipe-back stealing gestures from the app ScrollView.
+        newWebView.allowsBackForwardNavigationGestures = false
 
         #if DEBUG
             newWebView.isInspectable = true
